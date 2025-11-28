@@ -543,7 +543,7 @@ function Uninstall-Full {
 # 7. MAIN GUI
 # ==========================================
 $Form = New-Object System.Windows.Forms.Form
-$Form.Text = "JDownloader 2 Ultimate Manager - Installation, Removal, Themes"
+$Form.Text = "JDownloader 2 Ultimate Admin Toolkit - Installation, Removal, Themes"
 $Form.Size = New-Object System.Drawing.Size(700, 750)
 $Form.StartPosition = "CenterScreen"
 $Form.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
@@ -626,4 +626,5 @@ $BtnGo.Add_Click({
 })
 
 $Form.Add_Shown({ $Form.Activate() })
+
 [void]$Form.ShowDialog()
