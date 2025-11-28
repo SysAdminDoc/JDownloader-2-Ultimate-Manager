@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-A comprehensive, "Paranoid Administrator" level PowerShell automation suite for installing, hardening, and theming **JDownloader 2**.
+A comprehensive PowerShell automation script for managing **JDownloader 2**.
 
 This tool is designed to deploy a clean, ad-free, and aesthetically consistent instance of JDownloader 2. It automates the complex process of syncing Look-and-Feel (LAF) files with internal configurations, patching executable icons, and stripping out adware/banners.
 
