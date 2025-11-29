@@ -1,10 +1,9 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v10.2 - HOTFIX)
-    - Complete Rewrite & Modernization
-    - Features: Theme/Icon Management, Configuration Tuning, Backups, Repair, Hardening.
+    JDownloader 2 ULTIMATE MANAGER (v12.0 - HIGH PERFORMANCE)
     - Architecture: WinForms GUI, JSON Settings Persistence, Robust Logging.
-    - FIXES: Color assignment syntax errors, Icon extraction logic, Ad removal regression.
+    - NEW CORE: High DPI Awareness (Sharp Text), BITS Transfer Engine.
+    - FIXES: Donate button timestamp validation, persistent debloat.
 #>
 
 # ==========================================
@@ -21,8 +20,19 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
     Exit
 }
 
+# --- EARLY ASSEMBLY LOADING & DPI FIX ---
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+# Force High DPI Awareness (Fixes blurry text on Windows 10/11)
+try {
+    $methods = '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
+    $user32 = Add-Type -MemberDefinition $methods -Name "Win32" -Namespace Win32 -PassThru
+    $user32::SetProcessDPIAware() | Out-Null
+} catch {
+    # Silently fail on older OS versions
+}
+
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 # ==========================================
@@ -31,7 +41,7 @@ Add-Type -AssemblyName System.Drawing
 
 $AppDataDir = "$env:ProgramData\JD2-Ultimate-Manager"
 $LogDir     = "$AppDataDir\Logs"
-$WorkDir    = "$env:TEMP\JD2_Ult_Tool_v10"
+$WorkDir    = "$env:TEMP\JD2_Ult_Tool_v12_0"
 $SettingsFile = "$AppDataDir\settings.json"
 $VersionFile  = "$AppDataDir\version.json"
 
@@ -97,6 +107,7 @@ $ThemeDefinitions = [ordered]@{
 # 4. EMBEDDED CONFIGURATIONS (TEMPLATES)
 # ==========================================
 
+# ENFORCED DEBLOAT: donatebuttonstate set to CUSTOM_HIDDEN, plus future timestamp
 $Template_GUI = @'
 {
   "overviewpaneldownloadlinksfailedcountvisible": false,
@@ -116,12 +127,13 @@ $Template_GUI = @'
   "overviewpanelsmartinfovisible": true,
   "availablecolumntextvisible": false,
   "overviewpaneldownloadbytesremainingvisible": true,
-  "bannerenabled": true,
+  "bannerenabled": false,
   "showfullhostname": false,
   "overviewpanellinkgrabberstatusonlinevisible": true,
   "linkpropertiespanelcommentvisible": true,
   "clipboardmonitored": true,
-  "donatebuttonstate": "VISIBLE",
+  "donatebuttonstate": "CUSTOM_HIDDEN",
+  "donatebuttonlatestautochange": 1764274189351,
   "filecountinsizecolumnvisible": true,
   "clipboardskipmode": "ON_STARTUP",
   "premiumexpirewarningenabled": false,
@@ -130,7 +142,7 @@ $Template_GUI = @'
   "tablewraparoundenabled": true,
   "specialdealoboomdialogvisibleonstartup": false,
   "tooltipenabled": true,
-  "statusbaraddpremiumbuttonvisible": true,
+  "statusbaraddpremiumbuttonvisible": false,
   "captchadialogborderaroundimageenabled": true,
   "tablemouseoverhighlightenabled": true,
   "linkpropertiespanelsavetovisible": true,
@@ -170,7 +182,7 @@ $Template_GUI = @'
   "speedmeterframespersecond": 4,
   "linkpropertiespanelpackagenamevisible": true,
   "passwordprotectionenabled": false,
-  "specialdealsenabled": true,
+  "specialdealsenabled": false,
   "overviewpaneldownloadspeedvisible": true,
   "premiumstatusbardisplay": "GROUP_BY_ACCOUNT_TYPE",
   "maxsizeunit": "TiB",
@@ -191,15 +203,16 @@ $Template_GUI = @'
   "linkgrabbertaboverviewvisible": true,
   "overviewpaneldownloadlinksskippedcountvisible": false,
   "windowswindowmanageraltkeyworkaroundenabled": true,
-  "updatebuttonflashingenabled": true,
+  "updatebuttonflashingenabled": false,
   "overviewpanelvisibleonlyinfovisible": true,
   "linkgrabbersidebarvisible": true,
-  "downloadspropertiespanelarchivepasswordvisible": true
+  "downloadspropertiespanelarchivepasswordvisible": true,
+  "captchaexchangeenabled": false
 }
 '@
 
 $Template_General = @'
-{"maxsimultanedownloadsperhost":1,"delaywritemode":"AUTO","iffileexistsaction":"ASK_FOR_EACH_FILE","dupemanagerenabled":true,"forcemirrordetectioncaseinsensitive":true,"autoopencontainerafterdownload":true,"preferbouncycastlefortls":false,"autostartdownloadoption":"ONLY_IF_EXIT_WITH_RUNNING_DOWNLOADS","maxsimultanedownloads":3,"pausespeed":10240,"defaultdownloadfolder":"C:\\Downloads","windowsjnaidledetectorenabled":true,"downloadspeedlimitrememberedenabled":true,"closedwithrunningdownloads":false,"autostartcountdownseconds":10,"maxdownloadsperhostenabled":false,"maxchunksperfile":1,"sambaprefetchenabled":true,"showcountdownonautostartdownloads":true,"savelinkgrabberlistenabled":true,"onskipduetoalreadyexistsaction":"SKIP_FILE","hashretryenabled":false,"sharedmemorystateenabled":false,"convertrelativepathsjdroot":true,"keepxoldlists":5,"useavailableaccounts":true,"cleanupafterdownloadaction":"NEVER","hashcheckenabled":true,"downloadspeedlimitenabled":false,"downloadspeedlimit":51200}
+{"maxsimultanedownloadsperhost":1,"delaywritemode":"AUTO","iffileexistsaction":"ASK_FOR_EACH_FILE","dupemanagerenabled":true,"forcemirrordetectioncaseinsensitive":true,"autoopencontainerafterdownload":true,"preferbouncycastlefortls":false,"autostartdownloadoption":"ONLY_IF_EXIT_WITH_RUNNING_DOWNLOADS","maxsimultanedownloads":3,"pausespeed":10240,"defaultdownloadfolder":"C:\\Downloads","windowsjnaidledetectorenabled":true,"downloadspeedlimitrememberedenabled":true,"closedwithrunningdownloads":false,"autostartcountdownseconds":10,"maxdownloadsperhostenabled":false,"maxchunksperfile":1,"sambaprefetchenabled":true,"showcountdownonautostartdownloads":true,"savelinkgrabberlistenabled":true,"onskipduetoalreadyexistsaction":"SKIP_FILE","hashretryenabled":false,"sharedmemorystateenabled":false,"convertrelativepathsjdroot":true,"keepxoldlists":5,"useavailableaccounts":true,"cleanupafterdownloadaction":"REMOVE_FINISHED_AND_DELETE_EXTRACTED","hashcheckenabled":true,"downloadspeedlimitenabled":false,"downloadspeedlimit":51200,"hidesinglechildpackages":true}
 '@
 
 $Template_Tray = @'
@@ -243,16 +256,28 @@ function Load-Settings {
     return $null
 }
 
+# --- UPDATED DOWNLOAD ENGINE (BITS + FAILOVER) ---
 function Download-File {
     param([string]$Url, [string]$Destination)
     Log-Status "Downloading: $(Split-Path $Destination -Leaf)"
+    
+    # Method 1: BITS (Robust)
     try {
         if (-not (Get-Module -Name BitsTransfer -ListAvailable)) { Import-Module BitsTransfer -ErrorAction Stop }
         Start-BitsTransfer -Source $Url -Destination $Destination -ErrorAction Stop -Priority Foreground
         return $true
     } catch {
-        try { Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -ErrorAction Stop; return $true }
-        catch { Log-Status "Download failed: $_" "ERROR"; return $false }
+        Log-Status "BITS Failed ($($_)). Trying Failover..." "WARN"
+    }
+
+    # Method 2: WebClient (Failover)
+    try { 
+        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -ErrorAction Stop
+        return $true 
+    }
+    catch { 
+        Log-Status "Download completely failed: $_" "ERROR"
+        return $false 
     }
 }
 
@@ -280,10 +305,18 @@ function Detect-JDPath {
 
 function Kill-JDownloader {
     Log-Status "Terminating JDownloader processes..."
-    Get-Process | Where-Object { $_.ProcessName -match "JDownloader|javaw" } | ForEach-Object {
-        try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
+    # Robust kill with wait loop to prevent race conditions
+    $limit = 0
+    while ($limit -lt 15) {
+        $procs = Get-Process | Where-Object { $_.ProcessName -match "JDownloader|javaw" }
+        if (-not $procs) { break }
+        
+        $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        $limit++
     }
-    Start-Sleep -Seconds 2
+    if ($limit -ge 15) { Log-Status "Warning: Could not terminate all JD processes." "WARN" }
+    Start-Sleep -Seconds 1
 }
 
 function Backup-JD {
@@ -324,7 +357,7 @@ function Task-ExtractIcons {
     
     Log-Status "Locating icon data within archive..."
     
-    # --- FIXED: Recursive search for 'images' folder ---
+    # Recursive search for 'images' folder
     $foundImages = Get-ChildItem -Path $extractPath -Recurse -Directory | Where-Object { $_.Name -eq "images" } | Select-Object -First 1
     
     if (-not $foundImages) {
@@ -341,7 +374,7 @@ function Task-ExtractIcons {
     # Copy CONTENTS only
     Copy-Item "$($foundImages.FullName)\*" $targetImages -Recurse -Force
 
-    # --- FIXED: Cleanup incorrect folders from previous broken runs ---
+    # Cleanup incorrect folders from previous broken runs
     $baseJdPath = "$InstallPath\themes\$TargetIconSet\org\jdownloader"
     $badFolders = @("dark", "material-darker", "material", "minimal", "standard")
     
@@ -364,7 +397,7 @@ function Task-PatchLaf {
     try {
         $content = Get-Content -Path $JsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
         
-        # Patch properties - Ensure Strict Types
+        # Patch properties
         if (-not $content.PSObject.Properties["iconsetid"]) {
             $content | Add-Member -MemberType NoteProperty -Name "iconsetid" -Value $IconSetId
         } else { $content.iconsetid = $IconSetId }
@@ -379,7 +412,7 @@ function Task-PatchLaf {
 
 function Task-NukeBanners {
     param([string]$InstallPath)
-    Log-Status "Removing Banner Ads (Filesystem)..."
+    Log-Status "Nuking Banner Ads (Filesystem)..."
     Add-Type -AssemblyName System.Drawing
     $themeDir = "$InstallPath\themes"
     if (Test-Path $themeDir) {
@@ -430,8 +463,50 @@ function Task-PatchExeIcon {
     Start-Process explorer.exe
 }
 
+function Set-JsonConfig {
+    param($Path, $DataHash)
+    try {
+        $DataHash | ConvertTo-Json -Depth 100 | Set-Content $Path -Encoding UTF8
+        Log-Status "Patched: $(Split-Path $Path -Leaf)"
+    } catch { Log-Status "Error writing $Path" "ERROR" }
+}
+
+function Task-DeepHardening {
+    param([string]$cfgPath)
+    Log-Status "Applying Deep Cache Hardening (Contribute Panel)..."
+
+    # 1. AdvancedConfig.json
+    $advConfig = @{
+        "org.jdownloader.gui.jdgui.settings.AboutConfigPanel.contributepanelvisible" = $false
+        "org.jdownloader.gui.jdgui.settings.AboutConfigPanel.contributepanelshown"   = $false
+        "org.jdownloader.gui.jdgui.settings.AboutConfigPanel.contributepanelallowed" = $false
+    }
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.AdvancedConfig.json" -DataHash $advConfig
+
+    # 2. WidgetStateManager.json
+    $widgetState = @{
+        "contributepanelvisible" = $false
+        "contributepanelallowed" = $false
+        "aboutpanelvisible"      = $false
+    }
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.controlling.WidgetStateManager.json" -DataHash $widgetState
+
+    # 3. GUILayout.json
+    $guiLayout = @{
+        "contributepanel_visible" = $false
+    }
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.views.jdgui.GUILayout.json" -DataHash $guiLayout
+
+    # 4. AdvancedSettings.json
+    $advSettings = @{
+        "contributepanel_enabled" = $false
+        "contributepanel_visible" = $false
+    }
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.advanced.AdvancedSettings.json" -DataHash $advSettings
+}
+
 function Task-Install {
-    param([string]$Source) # 'GitHub' or 'Mega'
+    param([string]$Source)
     Log-Status "Starting Installation ($Source)..."
     
     if ($Source -eq "GitHub") {
@@ -477,6 +552,50 @@ function Trigger-Update {
     }
 }
 
+function Run-Audit {
+    param([string]$InstallPath)
+    Log-Status "=== STARTING SYSTEM AUDIT ==="
+    
+    if (-not (Test-Path $InstallPath)) {
+        Log-Status "AUDIT FAILED: Install path not found." "ERROR"; return
+    }
+    
+    $issues = 0
+    $cfg = "$InstallPath\cfg"
+    $laf = "$cfg\laf"
+    
+    # Check Critical Configs
+    $checkFiles = @("org.jdownloader.settings.GraphicalUserInterfaceSettings.json", "org.jdownloader.settings.GeneralSettings.json")
+    foreach ($f in $checkFiles) {
+        if (-not (Test-Path "$cfg\$f")) { Log-Status "MISSING CONFIG: $f" "WARN"; $issues++ }
+    }
+    
+    # Check Theme folder structure
+    if (-not (Test-Path "$InstallPath\themes\standard\org\jdownloader\images")) {
+        Log-Status "MISSING ICONS: Standard theme folder incorrect." "WARN"; $issues++
+    }
+    
+    # Check Debloat Files (Mandatory now)
+    $debloatFiles = @(
+        "org.jdownloader.gui.jdgui.settings.AboutConfigPanel.json",
+        "org.jdownloader.settings.AboutSettings.json",
+        "org.jdownloader.gui.jdgui.settings.MainToolBar.json",
+        "org.jdownloader.settings.PremiumSettings.json",
+        "org.jdownloader.settings.NewsSettings.json"
+    )
+    foreach ($f in $debloatFiles) {
+        if (-not (Test-Path "$cfg\$f")) { Log-Status "MISSING DEBLOAT: $f (Run Execute to fix)" "WARN"; $issues++ }
+    }
+    
+    if ($issues -gt 0) {
+        Log-Status "AUDIT: FAILED - $issues Issues Found" "WARN"
+        [System.Windows.Forms.MessageBox]::Show("Audit found $issues potential issues.`nCheck log for details.", "Audit Failed", "OK", "Warning")
+    } else {
+        Log-Status "AUDIT: PASSED - No Critical Issues Detected" "SUCCESS"
+        [System.Windows.Forms.MessageBox]::Show("Audit Passed! System looks good.", "Audit Passed", "OK", "Information")
+    }
+}
+
 # ==========================================
 # 7. MAIN LOGIC ORCHESTRATOR
 # ==========================================
@@ -485,6 +604,11 @@ function Execute-Operations {
     param($GUI_State)
     
     $JDPath = $GUI_State.InstallPath
+    
+    # Sanity Checks
+    if ([string]::IsNullOrWhiteSpace($JDPath)) { Log-Status "Path cannot be empty." "ERROR"; return }
+    if ($JDPath.Contains("(") -or $JDPath.Contains(")")) { Log-Status "Warning: Path contains parentheses. Ensure proper escaping if manual intervention needed." "WARN" }
+    
     if (-not (Test-Path $JDPath) -and $GUI_State.Mode -eq "Modify") {
         Log-Status "Invalid JDownloader Path!" "ERROR"; return
     }
@@ -524,23 +648,31 @@ function Execute-Operations {
     Task-ExtractIcons -ZipUrl $IconDef.Url -InstallPath $JDPath -TargetIconSet $jsonIconId
     
     # 3. Config Phase
-    # GUI Settings - FIXED: Ad Removal Logic restored
+    # GUI Settings (ENFORCED HARDENING)
     try {
         $guiObj = $Template_GUI | ConvertFrom-Json
         $guiObj.lookandfeeltheme = $Theme.LafID
         
-        # Enforce Ad Removal if Checked
-        if ($GUI_State.RemoveBanners) {
-            $guiObj.bannerenabled = $false
-            $guiObj.donatebuttonstate = "CUSTOM_HIDDEN"
-            $guiObj.specialdealsenabled = $false
-            $guiObj.statusbaraddpremiumbuttonvisible = $false
-        }
+        # --- FIXED: MANDATORY DONATE BLOCK (Directly in GUI settings) ---
+        if (-not $guiObj.PSObject.Properties["donatebuttonstate"]) {
+             $guiObj | Add-Member -MemberType NoteProperty -Name "donatebuttonstate" -Value "CUSTOM_HIDDEN"
+        } else { $guiObj.donatebuttonstate = "CUSTOM_HIDDEN" }
+
+        # --- FIXED: TIMESTAMP VALIDATION (Prevents reversion) ---
+        if (-not $guiObj.PSObject.Properties["donatebuttonlatestautochange"]) {
+             $guiObj | Add-Member -MemberType NoteProperty -Name "donatebuttonlatestautochange" -Value 1764274189351
+        } else { $guiObj.donatebuttonlatestautochange = 1764274189351 }
+        
+        # Other Mandatory Flags
+        $guiObj.bannerenabled = $false
+        $guiObj.specialdealsenabled = $false
+        $guiObj.statusbaraddpremiumbuttonvisible = $false
+        $guiObj.specialdealoboomdialogvisibleonstartup = $false
 
         $guiObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json" -Encoding UTF8
     } catch { Log-Status "Config Write Error (GUI): $_" "ERROR" }
     
-    # General Settings
+    # General Settings (Includes Cleanup Logic)
     try {
         $genObj = $Template_General | ConvertFrom-Json
         $genObj.maxsimultanedownloads = [int]$GUI_State.MaxSim
@@ -553,12 +685,38 @@ function Execute-Operations {
     try {
         $trayObj = $Template_Tray | ConvertFrom-Json
         $trayObj.startminimizedenabled = $GUI_State.StartMin
-        $trayObj.onminimizeaction = if ($GUI_State.MinToTray) { "TO_TASKBAR_IF_ALLOWED" } else { "TO_TASKBAR" } # Simplified logic
+        $trayObj.onminimizeaction = if ($GUI_State.MinToTray) { "TO_TASKBAR_IF_ALLOWED" } else { "TO_TASKBAR" }
         $trayObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.gui.jdtrayicon.TrayExtension.json" -Encoding UTF8
     } catch { Log-Status "Config Write Error (Tray): $_" "ERROR" }
 
-    # 4. Hardening
-    if ($GUI_State.RemoveBanners) { Task-NukeBanners -InstallPath $JDPath }
+    # 4. Advanced Debloat & Layout (MANDATORY EXECUTION)
+    Log-Status "Applying Mandatory Debloat Policies..."
+    
+    # Contribute Tab (3-File Lockout)
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.AboutConfigPanel.json" -DataHash @{contributepanelshown=$false; contributepanelallowed=$false; contributepanelvisible=$false}
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.AboutSettings.json" -DataHash @{contributepanelenabled=$false; contributepanelvisible=$false}
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.MainToolBar.json" -DataHash @{contributepanelvisible=$false}
+    
+    # Deep Cache Nuke (Contribute Panel Caches Only)
+    Task-DeepHardening -cfgPath $cfgPath
+
+    # Premium Ads
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.PremiumSettings.json" -DataHash @{advertisingmarketenabled=$false; premiumalertspeedcolumnenabled=$false}
+    
+    # News Panel
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.NewsSettings.json" -DataHash @{newsenabled=$false; newspopupsenabled=$false}
+    
+    # MyJD Promotions
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.MyJDownloaderSettings.json" -DataHash @{myjdremotetasksenabled=$false; myjdrunsilentupdates=$false}
+
+    # Minimal Layout Fix (Optional)
+    if ($GUI_State.ForceMinimal) {
+        Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.MainTabLayout.json" -DataHash @{compactmodetabs=$true; hidemyjdtab=$true}
+    }
+
+    # 5. Hardening (MANDATORY NUKE)
+    Task-NukeBanners -InstallPath $JDPath
+    
     if ($GUI_State.PatchExe) { Task-PatchExeIcon -InstallPath $JDPath }
     
     Log-Status "=== Operations Complete ===" "SUCCESS"
@@ -575,8 +733,8 @@ function Execute-Operations {
 # ==========================================
 
 $Form = New-Object System.Windows.Forms.Form
-$Form.Text = "JDownloader 2 Ultimate Manager v10.2"
-$Form.Size = New-Object System.Drawing.Size(720, 780)
+$Form.Text = "JDownloader 2 Ultimate Manager v12.0"
+$Form.Size = New-Object System.Drawing.Size(720, 830)
 $Form.StartPosition = "CenterScreen"
 $Form.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
 $Form.ForeColor = [System.Drawing.Color]::WhiteSmoke
@@ -602,7 +760,7 @@ $GrpPath.Controls.Add($TxtPath)
 
 $BtnDetect = New-Object System.Windows.Forms.Button
 $BtnDetect.Text = "Auto-Detect"; $BtnDetect.Location = New-Object System.Drawing.Point(455, 29); $BtnDetect.Size = New-Object System.Drawing.Size(100, 25); $BtnDetect.FlatStyle="Flat"
-$BtnDetect.BackColor = [System.Drawing.Color]::FromArgb(64,64,64) # FIXED
+$BtnDetect.BackColor = [System.Drawing.Color]::FromArgb(64,64,64)
 $BtnDetect.Add_Click({ 
     $p = Detect-JDPath; if($p){$TxtPath.Text=$p;Log-Status "Detected: $p"}else{Log-Status "Not found." "WARN"} 
 })
@@ -610,7 +768,7 @@ $GrpPath.Controls.Add($BtnDetect)
 
 $BtnBrowse = New-Object System.Windows.Forms.Button
 $BtnBrowse.Text = "Browse..."; $BtnBrowse.Location = New-Object System.Drawing.Point(565, 29); $BtnBrowse.Size = New-Object System.Drawing.Size(90, 25); $BtnBrowse.FlatStyle="Flat"
-$BtnBrowse.BackColor = [System.Drawing.Color]::FromArgb(64,64,64) # FIXED
+$BtnBrowse.BackColor = [System.Drawing.Color]::FromArgb(64,64,64)
 $BtnBrowse.Add_Click({
     $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
     if ($fbd.ShowDialog() -eq "OK") { $TxtPath.Text = $fbd.SelectedPath }
@@ -637,15 +795,26 @@ $ThemeDefinitions.Keys | ForEach-Object { $CboTheme.Items.Add($_) } | Out-Null; 
 
 # Preview Panel
 $PnlPreview = New-Object System.Windows.Forms.Panel; $PnlPreview.Location = New-Object System.Drawing.Point(15, 75); $PnlPreview.Size = New-Object System.Drawing.Size(310, 50); $PnlPreview.BorderStyle="FixedSingle"
-$PnlPreview.BackColor = [System.Drawing.Color]::FromArgb(45,45,45) # FIXED
+$PnlPreview.BackColor = [System.Drawing.Color]::FromArgb(45,45,45)
 $GrpTheme.Controls.Add($PnlPreview)
 $LblPreDesc = New-Object System.Windows.Forms.Label; $LblPreDesc.Location=New-Object System.Drawing.Point(5,5); $LblPreDesc.AutoSize=$true; $LblPreDesc.Text="Description..."; $PnlPreview.Controls.Add($LblPreDesc)
 
-$ChkWinDec = New-Object System.Windows.Forms.CheckBox; $ChkWinDec.Text = "Enable Window Decorations (Custom Titlebar)"; $ChkWinDec.Location = New-Object System.Drawing.Point(15, 135); $ChkWinDec.AutoSize=$true; $ChkWinDec.Checked=$true; $GrpTheme.Controls.Add($ChkWinDec)
+$ChkWinDec = New-Object System.Windows.Forms.CheckBox; $ChkWinDec.Text = "Enable Window Decorations (Custom Titlebar)"; $ChkWinDec.Location = New-Object System.Drawing.Point(15, 130); $ChkWinDec.AutoSize=$true; $ChkWinDec.Checked=$true; $GrpTheme.Controls.Add($ChkWinDec)
+$ChkMinLay = New-Object System.Windows.Forms.CheckBox; $ChkMinLay.Text = "Compact Tabs"; $ChkMinLay.Location = New-Object System.Drawing.Point(15, 150); $ChkMinLay.AutoSize=$true; $GrpTheme.Controls.Add($ChkMinLay)
 
-$LblIco = New-Object System.Windows.Forms.Label; $LblIco.Text = "Icon Pack:"; $LblIco.Location = New-Object System.Drawing.Point(15, 165); $LblIco.AutoSize=$true; $GrpTheme.Controls.Add($LblIco)
-$CboIcons = New-Object System.Windows.Forms.ComboBox; $CboIcons.Location = New-Object System.Drawing.Point(85, 162); $CboIcons.Width=240; $CboIcons.DropDownStyle="DropDownList"; $CboIcons.BackColor="DimGray"; $CboIcons.ForeColor="White"
+$LblIco = New-Object System.Windows.Forms.Label; $LblIco.Text = "Icon Pack:"; $LblIco.Location = New-Object System.Drawing.Point(15, 180); $LblIco.AutoSize=$true; $GrpTheme.Controls.Add($LblIco)
+$CboIcons = New-Object System.Windows.Forms.ComboBox; $CboIcons.Location = New-Object System.Drawing.Point(85, 177); $CboIcons.Width=140; $CboIcons.DropDownStyle="DropDownList"; $CboIcons.BackColor="DimGray"; $CboIcons.ForeColor="White"
 $IconDefinitions.Keys | ForEach-Object { $CboIcons.Items.Add($_) } | Out-Null; $CboIcons.SelectedIndex=0; $GrpTheme.Controls.Add($CboIcons)
+
+# Open Folder Button
+$BtnOpenThm = New-Object System.Windows.Forms.Button; $BtnOpenThm.Text="Open Folder"; $BtnOpenThm.Location=New-Object System.Drawing.Point(235, 176); $BtnOpenThm.Size=New-Object System.Drawing.Size(90,23); $BtnOpenThm.FlatStyle="Flat"; $BtnOpenThm.BackColor=[System.Drawing.Color]::FromArgb(64,64,64)
+$BtnOpenThm.Add_Click({ 
+    $iconP = if($CboIcons.Text.Contains("Dark") -or $CboIcons.Text.Contains("Minimal")){"minimal"}else{"standard"}
+    $p = "$($TxtPath.Text)\themes\$iconP\org\jdownloader\images"
+    if(Test-Path $p){Invoke-Item $p}else{Log-Status "Icon folder not found (not installed yet?)" "WARN"}
+})
+$GrpTheme.Controls.Add($BtnOpenThm)
+
 
 # Event Handler for Theme Change
 $CboTheme.Add_SelectedIndexChanged({
@@ -675,25 +844,63 @@ $GrpAdv = New-Object System.Windows.Forms.GroupBox
 $GrpAdv.Text = "Hardening & Actions"; $GrpAdv.Location = New-Object System.Drawing.Point(350, 350); $GrpAdv.Size = New-Object System.Drawing.Size(340, 90); $GrpAdv.ForeColor="LightGray"
 $Form.Controls.Add($GrpAdv)
 
-$ChkBanners = New-Object System.Windows.Forms.CheckBox; $ChkBanners.Text="Remove Banners"; $ChkBanners.Location=New-Object System.Drawing.Point(15,25); $ChkBanners.AutoSize=$true; $ChkBanners.Checked=$true; $GrpAdv.Controls.Add($ChkBanners)
-$ChkExe = New-Object System.Windows.Forms.CheckBox; $ChkExe.Text="Darken EXE Icon"; $ChkExe.Location=New-Object System.Drawing.Point(150,25); $ChkExe.AutoSize=$true; $ChkExe.Checked=$true; $GrpAdv.Controls.Add($ChkExe)
-$ChkUpdate = New-Object System.Windows.Forms.CheckBox; $ChkUpdate.Text="Trigger Update"; $ChkUpdate.Location=New-Object System.Drawing.Point(15,50); $ChkUpdate.AutoSize=$true; $ChkUpdate.Checked=$true; $GrpAdv.Controls.Add($ChkUpdate)
+# Banner Checkbox REMOVED - Mandatory now.
 
-# -- Main Buttons --
+$ChkExe = New-Object System.Windows.Forms.CheckBox; $ChkExe.Text="Darken EXE Icon"; $ChkExe.Location=New-Object System.Drawing.Point(15,25); $ChkExe.AutoSize=$true; $ChkExe.Checked=$true; $GrpAdv.Controls.Add($ChkExe)
+$ChkUpdate = New-Object System.Windows.Forms.CheckBox; $ChkUpdate.Text="Trigger Update"; $ChkUpdate.Location=New-Object System.Drawing.Point(180,25); $ChkUpdate.AutoSize=$true; $ChkUpdate.Checked=$true; $GrpAdv.Controls.Add($ChkUpdate)
+
+# -- QoL / Repair Buttons --
 $BtnRepair = New-Object System.Windows.Forms.Button
-$BtnRepair.Text = "Repair / Reset Config"; $BtnRepair.Location = New-Object System.Drawing.Point(15, 450); $BtnRepair.Size = New-Object System.Drawing.Size(150, 35); $BtnRepair.BackColor="OrangeRed"; $BtnRepair.FlatStyle="Flat"
+$BtnRepair.Text = "Reset Config"; $BtnRepair.Location = New-Object System.Drawing.Point(15, 450); $BtnRepair.Size = New-Object System.Drawing.Size(100, 30); $BtnRepair.BackColor="OrangeRed"; $BtnRepair.FlatStyle="Flat"
 $BtnRepair.Add_Click({
-    if ([System.Windows.Forms.MessageBox]::Show("Close JD2 and delete 'cfg' folder? (Backups will be made)","Confirm","YesNo") -eq "Yes") {
-        Kill-JDownloader
-        Backup-JD -InstallPath $TxtPath.Text
+    if ([System.Windows.Forms.MessageBox]::Show("Close JD2 and delete 'cfg' folder?","Confirm","YesNo") -eq "Yes") {
+        Kill-JDownloader; Backup-JD -InstallPath $TxtPath.Text
         Remove-Item "$($TxtPath.Text)\cfg" -Recurse -Force -ErrorAction SilentlyContinue
-        Log-Status "Config reset. Run 'Execute' to rebuild."
+        Log-Status "Config reset."
     }
 })
 $Form.Controls.Add($BtnRepair)
 
+$BtnResetThm = New-Object System.Windows.Forms.Button
+$BtnResetThm.Text = "Reset Theme"; $BtnResetThm.Location = New-Object System.Drawing.Point(120, 450); $BtnResetThm.Size = New-Object System.Drawing.Size(100, 30); $BtnResetThm.FlatStyle="Flat"
+$BtnResetThm.BackColor=[System.Drawing.Color]::FromArgb(64,64,64)
+$BtnResetThm.Add_Click({
+    if ([System.Windows.Forms.MessageBox]::Show("Reset only appearance settings?","Confirm","YesNo") -eq "Yes") {
+        Kill-JDownloader
+        Remove-Item "$($TxtPath.Text)\cfg\laf" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item "$($TxtPath.Text)\themes\standard\org\jdownloader\images\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item "$($TxtPath.Text)\themes\minimal\org\jdownloader\images\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Log-Status "Theme reset."
+    }
+})
+$Form.Controls.Add($BtnResetThm)
+
+$BtnClearCache = New-Object System.Windows.Forms.Button
+$BtnClearCache.Text = "Clear Cache"; $BtnClearCache.Location = New-Object System.Drawing.Point(225, 450); $BtnClearCache.Size = New-Object System.Drawing.Size(100, 30); $BtnClearCache.FlatStyle="Flat"
+$BtnClearCache.BackColor=[System.Drawing.Color]::FromArgb(64,64,64)
+$BtnClearCache.Add_Click({
+    Kill-JDownloader
+    Remove-Item "$($TxtPath.Text)\tmp\*" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "$($TxtPath.Text)\cfg\*.cache" -Force -ErrorAction SilentlyContinue
+    Log-Status "Cache cleared."
+})
+$Form.Controls.Add($BtnClearCache)
+
+$BtnAudit = New-Object System.Windows.Forms.Button
+$BtnAudit.Text = "Run Audit"; $BtnAudit.Location = New-Object System.Drawing.Point(330, 450); $BtnAudit.Size = New-Object System.Drawing.Size(100, 30); $BtnAudit.BackColor="SeaGreen"; $BtnAudit.FlatStyle="Flat"
+$BtnAudit.Add_Click({ Run-Audit -InstallPath $TxtPath.Text })
+$Form.Controls.Add($BtnAudit)
+
+$BtnSafe = New-Object System.Windows.Forms.Button
+$BtnSafe.Text = "Launch Safe Mode"; $BtnSafe.Location = New-Object System.Drawing.Point(15, 485); $BtnSafe.Size = New-Object System.Drawing.Size(150, 30); $BtnSafe.BackColor="SeaGreen"; $BtnSafe.FlatStyle="Flat"
+$BtnSafe.Add_Click({
+    $exe = "$($TxtPath.Text)\JDownloader2.exe"
+    if(Test-Path $exe){ Start-Process $exe -ArgumentList "-safe" }
+})
+$Form.Controls.Add($BtnSafe)
+
 $BtnUninstall = New-Object System.Windows.Forms.Button
-$BtnUninstall.Text = "Full Uninstall"; $BtnUninstall.Location = New-Object System.Drawing.Point(180, 450); $BtnUninstall.Size = New-Object System.Drawing.Size(150, 35); $BtnUninstall.BackColor="Maroon"; $BtnUninstall.FlatStyle="Flat"
+$BtnUninstall.Text = "Full Uninstall"; $BtnUninstall.Location = New-Object System.Drawing.Point(175, 485); $BtnUninstall.Size = New-Object System.Drawing.Size(150, 30); $BtnUninstall.BackColor="Maroon"; $BtnUninstall.FlatStyle="Flat"
 $BtnUninstall.Add_Click({
     if ([System.Windows.Forms.MessageBox]::Show("Completely remove JDownloader?","Confirm","YesNo") -eq "Yes") {
         Task-FullUninstall -InstallPath $TxtPath.Text
@@ -702,16 +909,16 @@ $BtnUninstall.Add_Click({
 $Form.Controls.Add($BtnUninstall)
 
 $BtnExec = New-Object System.Windows.Forms.Button
-$BtnExec.Text = "EXECUTE ALL OPERATIONS"; $BtnExec.Location = New-Object System.Drawing.Point(350, 450); $BtnExec.Size = New-Object System.Drawing.Size(340, 50); $BtnExec.BackColor="DodgerBlue"; $BtnExec.FlatStyle="Flat"; $BtnExec.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$BtnExec.Text = "EXECUTE ALL OPERATIONS"; $BtnExec.Location = New-Object System.Drawing.Point(350, 450); $BtnExec.Size = New-Object System.Drawing.Size(340, 65); $BtnExec.BackColor="DodgerBlue"; $BtnExec.FlatStyle="Flat"; $BtnExec.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
 $Form.Controls.Add($BtnExec)
 
 # -- Footer: Progress & Log --
 $ProgressBar = New-Object System.Windows.Forms.ProgressBar
-$ProgressBar.Location = New-Object System.Drawing.Point(15, 510); $ProgressBar.Size = New-Object System.Drawing.Size(675, 10)
+$ProgressBar.Location = New-Object System.Drawing.Point(15, 530); $ProgressBar.Size = New-Object System.Drawing.Size(675, 10)
 $Form.Controls.Add($ProgressBar)
 
 $OutputBox = New-Object System.Windows.Forms.TextBox
-$OutputBox.Multiline = $true; $OutputBox.ScrollBars = "Vertical"; $OutputBox.Location = New-Object System.Drawing.Point(15, 530); $OutputBox.Size = New-Object System.Drawing.Size(675, 200)
+$OutputBox.Multiline = $true; $OutputBox.ScrollBars = "Vertical"; $OutputBox.Location = New-Object System.Drawing.Point(15, 550); $OutputBox.Size = New-Object System.Drawing.Size(675, 200)
 $OutputBox.BackColor = "Black"; $OutputBox.ForeColor = "LimeGreen"; $OutputBox.Font = New-Object System.Drawing.Font("Consolas", 9)
 $Form.Controls.Add($OutputBox)
 
@@ -745,13 +952,13 @@ $BtnExec.Add_Click({
         DlFolder = $TxtDl.Text
         StartMin = $ChkMin.Checked
         MinToTray = $ChkTray.Checked
-        RemoveBanners = $ChkBanners.Checked
         PatchExe = $ChkExe.Checked
         AutoUpdate = $ChkUpdate.Checked
+        ForceMinimal = $ChkMinLay.Checked
         PauseSpeed = 10240
     }
     
-    # Run async to not freeze GUI completely (using minimal doevents hack for simplicity in PS WinForms)
+    # Run async to not freeze GUI completely
     $Form.Refresh()
     Execute-Operations -GUI_State $State
     
