@@ -6,6 +6,9 @@
 
 A comprehensive PowerShell automation script for managing **JDownloader 2**.
 
+<img width="1637" height="1216" alt="Preview" src="https://github.com/user-attachments/assets/0953927a-209c-476d-aa87-a17f2ab68f19" />
+
+
 This tool is designed to deploy a clean, ad-free, and aesthetically consistent instance of JDownloader 2. It automates the complex process of syncing Look-and-Feel (LAF) files with internal configurations, patching executable icons, and stripping out adware/banners.
 
 ## 🚀 Features
