@@ -36,7 +36,7 @@ JDownloader 2 often reverts themes if the configuration and LAF files aren't per
 
 ## 🛠️ Usage
 
-1. **Download** the [JDownloader 2 Ultimate Manager.ps1](https://raw.githubusercontent.com/SysAdminDoc/JDownloaderDarkMode/refs/heads/main/JDownloader%202%20Ultimate%20Manager.ps1) script.
+1. **Download** the [JDownloader 2 Ultimate Manager.ps1](https://github.com/SysAdminDoc/JDownloaderDarkMode/releases/download/v1.0.0/JDownloader.2.Ultimate.Manager.ps1) script.
 2. **Right-click** the file and select **Run with PowerShell**.
    * *Note: The script will auto-request Administrator privileges to modify Program Files.*
 3. **Select your operation:**
