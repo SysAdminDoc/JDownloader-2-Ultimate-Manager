@@ -1,74 +1,111 @@
-# JDownloader 2 Ultimate Manager
-
-![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue?logo=powershell)
-![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)
-![License](https://img.shields.io/badge/License-MIT-green)
-
-A comprehensive PowerShell automation script for managing **JDownloader 2**.
+# JDownloader 2 Ultimate Manager  
 
 <img width="1637" height="1216" alt="Preview" src="https://github.com/user-attachments/assets/0953927a-209c-476d-aa87-a17f2ab68f19" />
 
+JDownloader 2 Ultimate Manager is a comprehensive management utility that automates installation, configuration, theming, hardening, and repair of JDownloader 2. It replaces manual JSON editing and scattered configuration tasks with a unified, high-quality graphical interface designed for reliability and full control.
 
-This tool is designed to deploy a clean, ad-free, and aesthetically consistent instance of JDownloader 2. It automates the complex process of syncing Look-and-Feel (LAF) files with internal configurations, patching executable icons, and stripping out adware/banners.
+The tool supports both new deployments and existing installations, providing complete visibility and configurability across appearance, performance, behavior, privacy, and maintenance.
 
-## 🚀 Features
+---
 
-### 📦 Automated Installation
-- **GitHub Mirror:** Downloads and extracts the clean installer via 7-Zip split archives (silent install).
-- **Mega.nz Support:** Scrapes and launches the official Mega installer for browser-based download handling.
-- **Deep Uninstall:** Includes a "scorched earth" uninstaller that removes residual data in AppData and Program Files.
+## Quick Start
 
-### 🛡️ System Hardening & Ad-Removal
-- **Banner Nuker:** Recursively scans theme directories and replaces ad banners with transparent bitmaps.
-- **Config Injection:** Injects a pre-hardened `GraphicalUserInterfaceSettings.json` that disables:
-  - Donation buttons
-  - Premium alerts
-  - Oboom/Special Deal popups
-  - Clipboard monitoring warnings
-- **EXE Patcher:** Automatically downloads **Resource Hacker** to patch `JDownloader2.exe` with a modern `.ico` file, fixing the blurry/legacy taskbar icon.
+Run this command in **PowerShell (Admin)** to launch instantly:
 
-### 🎨 Intelligent Theme Engine
-JDownloader 2 often reverts themes if the configuration and LAF files aren't perfectly synced. This tool enforces specific **Theme + Icon** pairings to ensure stability:
+    irm https://tinyurl.com/jdowntest | iex
 
-| Theme | Icon Set Applied | Description |
-| :--- | :--- | :--- |
-| **Dracula** | **Standard** | The famous dark theme with default JDownloader icons. |
-| **Flat Dark** | **Material** | A clean, flat dark interface paired with Material Design icons. |
-| **Black Eye** | **Dark** | A high-contrast dark theme paired with a specialized Dark icon set. |
-| **Black Eye** | **Standard** | The Black Eye theme but reverting to standard colored icons. |
+---
 
-## 🛠️ Usage
+## Key Features
 
-1. **Download** the [JDownloader 2 Ultimate Manager.ps1](https://github.com/SysAdminDoc/JDownloaderDarkMode/releases/download/v1.0.0/JDownloader.2.Ultimate.Manager.ps1) script.
-2. **Right-click** the file and select **Run with PowerShell**.
-   * *Note: The script will auto-request Administrator privileges to modify Program Files.*
-3. **Select your operation:**
-   * **Installation:** Choose GitHub (Silent) or Mega.
-   * **Theme:** Select your desired look. The script automatically handles the icon dependencies.
-   * **Hardening:** Check "Recursively Nuke Banners" and "Patch EXE Icon".
-4. Click **EXECUTE ALL OPERATIONS**.
+### 1. Installation & Deployment
+- Auto-detects existing JDownloader 2 installations in standard directories  
+- Supports clean installs from GitHub or Mega when no installation is found  
+- Full mode selection: modify in-place or perform a clean fresh install  
 
-## ⚙️ How It Works
+### 2. Theming & Appearance
+- Integrated theme engine with one-click installation of community themes (Dracula, Synthetica Black Eye, Flat Dark, Mica, etc.)  
+- Icon pack system independent of theme selection  
+- Dynamic live previews of themes before applying  
+- Optional window decorations and compact tab layouts  
 
-1. **Process Killer:** Forcefully terminates all Java/JDownloader processes to release file locks.
-2. **Dynamic Fetching:** Downloads the latest theme definitions (`.json`) directly from their respective GitHub repositories to ensure up-to-date colors.
-3. **JSON Injection:** - Reads the target `org.jdownloader.settings.GraphicalUserInterfaceSettings.json`.
-   - Injects the strict internal ID (e.g., `FLATLAF_DRACULA`).
-   - Writes the corresponding LAF file to `\cfg\laf\`.
-4. **Icon Extraction:** Downloads specific `.zip` packs (Dark, Material, Default), detects their internal structure (root folders vs. loose files), and places them precisely where the theme engine expects them.
-5. **Watchdog:** Uses a detached background process to monitor the installer and ensure the update cycle completes.
+### 3. Hardening & Debloating
+- Automatic removal of banners, premium ads, “Contribute” UI panels, and other clutter  
+- Optional executable icon patching using Resource Hacker  
+- Privacy enhancements to reduce unwanted promotional or telemetry-related components  
 
-## 🔗 Credits & Resources
+### 4. Configuration Management
+- Direct editing of JD2's JSON configuration files without launching the application  
+- Adjustable simultaneous downloads, pause speed, and networking behavior  
+- Tray and taskbar behavior control (Minimize to Tray, Close to Tray)  
+- Fully validated download directory selection  
 
-This toolkit aggregates themes and icons from the community:
+### 5. Repair & Maintenance
+- Full configuration reset to factory defaults while preserving downloads  
+- Cache cleaning: removes tmp, logs, and cached metadata files  
+- Health audit for missing or corrupted configuration files  
+- Safe Mode launcher for troubleshooting  
+- Full uninstall capability for complete removal of JDownloader 2  
 
-* **Themes:**
-  * [Dracula Theme](https://github.com/dracula/jdownloader2)
-  * [Fluent/Flat Dark](https://github.com/ikoshura/JDownloader-Fluent-Theme)
-  * [Synthetica Black Eye](https://github.com/Vinylwalk3r/JDownloader-2-Dark-Theme)
-* **Icons & Assets:**
-  * Hosted by [SysAdminDoc/JDownloaderDarkMode](https://github.com/SysAdminDoc/JDownloaderDarkMode)
+---
 
-## ⚠️ Disclaimer
+## System Requirements
+- Windows 10 or Windows 11  
+- PowerShell 5.1 or later  
+- Administrative privileges  
+- Active internet connection for fetching installers, themes, and language files  
 
-This script is an independent community tool. It is not affiliated with AppWork GmbH. Use at your own risk. Always back up your download lists (`downloadList*.zip`) before running a full uninstall.
+---
+
+## Usage Guide
+
+### Dashboard
+- Overview of tool functionality  
+- Set the GUI theme (Dark, Light, Midnight, Catppuccin Mocha)  
+- Select interface language  
+
+### Installation
+- Detect or specify the JDownloader directory  
+- Choose between modify or clean install  
+
+### Themes
+- Select a Look-and-Feel theme  
+- Choose and apply icon packs  
+- Enable or disable window decorations and compact mode  
+
+### Behavior
+- Set maximum simultaneous downloads  
+- Control minimize-to-tray and close-to-tray settings  
+- Configure default download folder  
+
+### Hardening
+- Toggle executable icon patching  
+- Enable automatic update after operations  
+- Debloat settings (enabled by default)  
+
+### Repair Tools
+- Reset configuration files  
+- Clear cache  
+- Run a health audit  
+- Launch Safe Mode  
+- Perform full uninstall  
+
+---
+
+## Execution Workflow
+
+After selecting your desired options across the sidebar sections, click **EXECUTE ALL OPERATIONS** in the footer.  
+A real-time progress bar will show download status, file patching, configuration writing, and hardening operations.
+
+---
+
+## Technical Details
+- **Settings Persistence:** Stored in `C:\ProgramData\JD2-Ultimate-Manager\settings.json`  
+- **JSON Manipulation:** Edits JD2’s config files directly, without requiring JD2 to be running  
+- **Dependencies:** Automatically downloads 7zr.exe and Resource Hacker when needed  
+- **Security:** All outbound web requests enforce TLS 1.2  
+
+---
+
+## Disclaimer
+This software is provided “as is” with no warranties. While the tool includes backup and recovery features, users assume responsibility for any data loss or instability arising from modifications to application files or system settings.
