@@ -1,11 +1,17 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.2 - PREVIEW FIX)
-    - Fixed: Theme Preview panel scaling (no longer overlaps footer).
-    - Fixed: Added missing ThemeUrl links for GitHub button.
+    JDownloader 2 ULTIMATE MANAGER (v13.4.4 - STABLE REPAIR)
+    - FIXED: Constructor overload errors in System.Drawing.Size and Point.
+    - FIXED: Arithmetic parsing issues causing argument count mismatches.
+    - FIXED: Null reference exceptions on event handlers.
     - Architecture: WinForms GUI, JSON Settings Persistence, Robust Logging.
-    - FEATURES: Resolution Scaling, Dynamic Themes, Language Support, Instant Previews.
 #>
+
+# ==========================================
+# 0. PRE-FLIGHT CHECKS & HARDENING
+# ==========================================
+# Enforce TLS 1.2 for all web requests immediately
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ==========================================
 # 1. INITIALIZATION & ELEVATION
@@ -17,21 +23,28 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
     $processInfo.FileName = "powershell.exe"
     $processInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
     $processInfo.Verb = "RunAs"
-    [System.Diagnostics.Process]::Start($processInfo) | Out-Null
+    try {
+        [System.Diagnostics.Process]::Start($processInfo) | Out-Null
+    } catch {
+        Write-Error "Failed to elevate privileges. $_"
+    }
     Exit
 }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Force High DPI Awareness
+# Force High DPI Awareness correctly
 try {
     $methods = '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
     $user32 = Add-Type -MemberDefinition $methods -Name "Win32" -Namespace Win32 -PassThru
     $user32::SetProcessDPIAware() | Out-Null
-} catch {}
+} catch {
+    # Fail silently on older OS
+}
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
+[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
 
 # ==========================================
 # 2. GLOBAL VARIABLES & PATHS
@@ -43,8 +56,11 @@ $SettingsFile = "$AppDataDir\settings.json"
 $VersionFile  = "$AppDataDir\version.json"
 $LangFile     = "$AppDataDir\lang.json"
 
+# Ensure directories exist with error handling
 foreach ($path in @($AppDataDir, $LogDir, $WorkDir)) {
-    if (-not (Test-Path $path)) { New-Item -ItemType Directory -Path $path -Force | Out-Null }
+    if (-not (Test-Path $path)) { 
+        try { New-Item -ItemType Directory -Path $path -Force | Out-Null } catch {} 
+    }
 }
 
 $LogFile     = "$LogDir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
@@ -57,13 +73,21 @@ $ToolTip.AutoPopDelay = 5000
 $ToolTip.InitialDelay = 1000
 $ToolTip.ReshowDelay = 500
 
+# Language Registry for live updates
+$LanguageRegistry = @()
+
+# Global tracking for cleanup
+$GlobalJobs = @{}
+$GlobalTimers = @()
+$ThemeImageCache = @{}
+
 # ==========================================
 # 3. LANGUAGE & GUI THEME ENGINE
 # ==========================================
 
 # --- Default English Fallback ---
 $DefaultLang = [ordered]@{
-    "Title" = "JDownloader 2 Ultimate Manager v13.2";
+    "Title" = "JDownloader 2 Ultimate Manager v13.4";
     "Dashboard" = "Dashboard"; "Installation" = "Installation"; "Themes" = "Themes"; 
     "Behavior" = "Behavior"; "Hardening" = "Hardening"; "Repair" = "Repair Tools";
     "Execute" = "EXECUTE ALL OPERATIONS"; "Status" = "Status: Ready";
@@ -116,7 +140,7 @@ foreach ($key in $DefaultLang.Keys) {
     $Lang[$key] = $DefaultLang[$key]
 }
 
-$AvailableLanguages = @{} # Stores raw JSON parts
+$AvailableLanguages = @{} 
 $CurrentLangCode = "en"
 
 function Load-Language {
@@ -142,7 +166,6 @@ function Load-Language {
                 Apply-LanguageData "en"
             }
         } else {
-            # Fallback if no internet/file
             $AvailableLanguages["en"] = $DefaultLang
         }
     } catch {
@@ -157,6 +180,16 @@ function Apply-LanguageData {
         foreach ($key in $dict.PSObject.Properties.Name) {
             $Lang[$key] = $dict.$key
         }
+    }
+}
+
+function Register-LangControl {
+    param($Control, $Key)
+    if (-not $Key) { return }
+    $script:LanguageRegistry += @{ Control = $Control; Key = $Key }
+    # Set initial text
+    if ($Lang.Contains($Key)) {
+        $Control.Text = $Lang[$Key]
     }
 }
 
@@ -242,9 +275,6 @@ $ThemeDefinitions = [ordered]@{
     }
 }
 
-# Cache for theme preview images
-$ThemeImageCache = @{}
-
 # ==========================================
 # 5. EMBEDDED CONFIGS (TEMPLATES)
 # ==========================================
@@ -262,9 +292,9 @@ function Log-Status {
     param([string]$Text, [string]$Type = "INFO")
     $timestamp = (Get-Date).ToString('HH:mm:ss')
     $msg = "[$timestamp] [$Type] $Text"
+    # Try/Catch wrap for logging
     try { Add-Content -Path $LogFile -Value $msg -ErrorAction SilentlyContinue } catch {}
     
-    # Update Status Label Only (Removed OutputBox)
     if ($StatusLabel -and $StatusLabel.IsHandleCreated) {
         $StatusLabel.Invoke([Action[string]]{ param($t) $StatusLabel.Text = $t }, "Status: $Text")
     }
@@ -283,20 +313,44 @@ function Load-Settings {
 function Download-File {
     param([string]$Url, [string]$Destination)
     Log-Status "Downloading: $(Split-Path $Destination -Leaf)"
-    try {
-        if (-not (Get-Module -Name BitsTransfer -ListAvailable)) { Import-Module BitsTransfer -ErrorAction Stop }
-        Start-BitsTransfer -Source $Url -Destination $Destination -ErrorAction Stop -Priority Foreground
-        return $true
-    } catch {
-        Log-Status "BITS download failed, trying web client. $_" "WARN"
+    
+    $maxRetries = 3
+    $attempt = 0
+    $success = $false
+
+    while ($attempt -lt $maxRetries -and -not $success) {
+        $attempt++
+        try {
+            if (-not (Get-Module -Name BitsTransfer -ListAvailable)) { Import-Module BitsTransfer -ErrorAction Stop }
+            Start-BitsTransfer -Source $Url -Destination $Destination -ErrorAction Stop -Priority Foreground
+            $success = $true
+        } catch {
+            Log-Status "BITS attempt $attempt failed: $_" "WARN"
+            try {
+                Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -ErrorAction Stop
+                $success = $true
+            } catch {
+                Log-Status "WebClient attempt $attempt failed from $Url. $_" "WARN"
+            }
+        }
+        
+        if (-not $success -and $attempt -lt $maxRetries) {
+            $delay = $attempt * 1500
+            Start-Sleep -Milliseconds $delay
+        }
     }
-    try {
-        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -ErrorAction Stop
-        return $true
-    } catch {
-        Log-Status "Download failed from $Url. $_" "ERROR"
-        return $false
+    
+    # Added file size/integrity check (basic)
+    if ($success -and (Test-Path $Destination)) {
+        $size = (Get-Item $Destination).Length
+        if ($size -lt 1024) { 
+            Log-Status "Downloaded file is suspiciously small ($size bytes). marking failed." "ERROR"
+            return $false 
+        }
     }
+    
+    if (-not $success) { Log-Status "Download definitively failed: $Url" "ERROR" }
+    return $success
 }
 
 function Get-7Zip {
@@ -309,27 +363,80 @@ function Get-7Zip {
     return $seven
 }
 
-# --- Theme Preloading ---
-function Preload-ThemeImages {
-    Log-Status "Pre-loading theme previews..."
-    foreach ($key in $ThemeDefinitions.Keys) {
-        $url = $ThemeDefinitions[$key].PreviewUrl
-        if ($url) {
-            try {
-                $wc = New-Object System.Net.WebClient
-                $bytes = $wc.DownloadData($url)
-                $ms = New-Object System.IO.MemoryStream(,$bytes)
-                $img = [System.Drawing.Image]::FromStream($ms)
-                $ThemeImageCache[$key] = $img
-            } catch {
-                $ThemeImageCache[$key] = $null
+# Enhanced Async Job Manager
+function Start-ThemeImagePreload {
+    param($Definitions)
+    Log-Status "Starting background theme fetch..."
+    
+    # Clean old job if exists
+    if ($GlobalJobs["ThemeFetcher"]) { Remove-Job -Job $GlobalJobs["ThemeFetcher"] -Force -ErrorAction SilentlyContinue }
+    
+    $jobScript = {
+        param($defs)
+        $results = @{}
+        $web = New-Object System.Net.WebClient
+        foreach ($key in $defs.Keys) {
+            $url = $defs[$key].PreviewUrl
+            if ($url) {
+                try {
+                    $bytes = $web.DownloadData($url)
+                    $results[$key] = $bytes
+                } catch { $results[$key] = $null }
             }
         }
+        return $results
     }
-    Log-Status "Theme previews loaded."
+
+    $j = Start-Job -ScriptBlock $jobScript -ArgumentList $Definitions -Name "ThemeFetcher"
+    $GlobalJobs["ThemeFetcher"] = $j
+    
+    $checkTimer = New-Object System.Windows.Forms.Timer
+    $checkTimer.Interval = 500
+    # Use closure to ensure variable safety or explicit ref
+    $checkTimer.Add_Tick({
+        param($sender, $e)
+        $j = Get-Job -Name "ThemeFetcher" -ErrorAction SilentlyContinue
+        if ($j -and $j.State -eq "Completed") {
+            $sender.Stop()
+            $sender.Dispose()
+            try {
+                $res = Receive-Job -Job $j
+                Remove-Job -Job $j
+                
+                # Process images
+                foreach ($k in $res.Keys) {
+                    if ($res[$k]) {
+                        $ms = New-Object System.IO.MemoryStream(,$res[$k])
+                        # Cache raw stream or image - keep stream open or use FromStream validation
+                        $img = [System.Drawing.Image]::FromStream($ms)
+                        if ($script:ThemeImageCache.ContainsKey($k)) { $script:ThemeImageCache[$k].Dispose() }
+                        $script:ThemeImageCache[$k] = $img
+                    }
+                }
+                Log-Status "Theme previews loaded." "SUCCESS"
+                if ($CboTheme -and $CboTheme.IsHandleCreated) {
+                    $CboTheme.Invoke([Action]{ Update-ThemePreview }) 
+                }
+            } catch {
+                Log-Status "Error processing theme images: $_" "ERROR"
+            }
+        } elseif (-not $j) {
+            $sender.Stop()
+        }
+    })
+    $GlobalTimers += $checkTimer
+    $checkTimer.Start()
 }
 
-# --- GUI Theme Applicator ---
+# Cleanup Helper
+function Cleanup-Resources {
+    Log-Status "Cleaning up resources..."
+    foreach ($t in $GlobalTimers) { if($t){$t.Stop(); $t.Dispose()} }
+    foreach ($j in $GlobalJobs.Values) { if($j){Stop-Job $j -ErrorAction SilentlyContinue; Remove-Job $j -ErrorAction SilentlyContinue} }
+    foreach ($img in $ThemeImageCache.Values) { if($img){$img.Dispose()} }
+}
+
+# Enhanced Theme Engine
 function Apply-GuiTheme {
     param($ThemeName)
     $pal = $GuiThemes[$ThemeName]
@@ -340,39 +447,45 @@ function Apply-GuiTheme {
     
     function Update-Control {
         param($ctrl)
-        if ($ctrl -is [System.Windows.Forms.Panel]) {
-            if ($ctrl.Name -eq "Sidebar") { $ctrl.BackColor = $pal.Sidebar }
-            elseif ($ctrl.Name -eq "MainPanel") { $ctrl.BackColor = $pal.Main }
-            elseif ($ctrl.Name -eq "Footer") { $ctrl.BackColor = $pal.Footer }
-            elseif ($ctrl.Tag -eq "Page") { $ctrl.BackColor = $pal.Main }
-            elseif ($ctrl.Name -eq "PnlPreview") { $ctrl.BackColor = $pal.BtnBack }
-            else { $ctrl.BackColor = $pal.Main } 
-        }
         
-        if ($ctrl -is [System.Windows.Forms.Button]) {
-            if ($ctrl.Text -eq $Lang.Execute) { 
-                $ctrl.BackColor = $pal.Accent 
-            } elseif ($ctrl.Tag -eq "SidebarBtn") {
-                $ctrl.BackColor = $pal.BtnBack
-                $ctrl.ForeColor = $pal.Fore
-            } else {
-                $ctrl.BackColor = $pal.BtnBack
-                $ctrl.ForeColor = $pal.Fore
+        $styled = $false
+        if ($ctrl.Tag -is [string]) {
+            switch ($ctrl.Tag) {
+                "Sidebar" { $ctrl.BackColor = $pal.Sidebar; $styled=$true }
+                "MainPanel" { $ctrl.BackColor = $pal.Main; $styled=$true }
+                "Footer" { $ctrl.BackColor = $pal.Footer; $styled=$true }
+                "Page" { $ctrl.BackColor = $pal.Main; $styled=$true }
+                "PreviewPanel" { $ctrl.BackColor = $pal.BtnBack; $styled=$true }
+                "PrimaryButton" { $ctrl.BackColor = $pal.Accent; $ctrl.ForeColor = "White"; $styled=$true }
+                "DangerButton" { $ctrl.BackColor = [System.Drawing.Color]::Maroon; $ctrl.ForeColor = "White"; $styled=$true }
+                "SuccessButton" { $ctrl.BackColor = [System.Drawing.Color]::SeaGreen; $ctrl.ForeColor = "White"; $styled=$true }
+                "NavButton" { $ctrl.BackColor = $pal.BtnBack; $ctrl.ForeColor = $pal.Fore; $styled=$true }
+                "Input" { $ctrl.BackColor = $pal.BtnBack; $ctrl.ForeColor = $pal.Fore; $styled=$true }
+                "SectionHeader" { $ctrl.ForeColor = $pal.Fore; $styled=$true }
+                "SubHeader" { $ctrl.ForeColor = "LightGray"; $styled=$true }
             }
         }
-        
-        if ($ctrl -is [System.Windows.Forms.TextBox] -or $ctrl -is [System.Windows.Forms.NumericUpDown]) {
-            $ctrl.BackColor = $pal.BtnBack
-            $ctrl.ForeColor = $pal.Fore
-        }
 
-        if ($ctrl -is [System.Windows.Forms.ComboBox]) {
-            $ctrl.BackColor = $pal.BtnBack
-            $ctrl.ForeColor = $pal.Fore
-        }
-        
-        if ($ctrl -is [System.Windows.Forms.Label] -or $ctrl -is [System.Windows.Forms.CheckBox]) {
-            $ctrl.ForeColor = $pal.Fore
+        # Fallback styles
+        if (-not $styled) {
+            if ($ctrl -is [System.Windows.Forms.Panel]) {
+                if ($ctrl.Name -eq "Sidebar") { $ctrl.BackColor = $pal.Sidebar }
+                elseif ($ctrl.Name -eq "MainPanel") { $ctrl.BackColor = $pal.Main }
+                elseif ($ctrl.Name -eq "Footer") { $ctrl.BackColor = $pal.Footer }
+                else { $ctrl.BackColor = $pal.Main } 
+            }
+            if ($ctrl -is [System.Windows.Forms.Button] -and $ctrl.Tag -ne "SidebarBtn") {
+                 $ctrl.BackColor = $pal.BtnBack
+                 $ctrl.ForeColor = $pal.Fore
+            }
+             if ($ctrl -is [System.Windows.Forms.TextBox] -or $ctrl -is [System.Windows.Forms.NumericUpDown] -or $ctrl -is [System.Windows.Forms.ComboBox]) {
+                $ctrl.BackColor = $pal.BtnBack
+                $ctrl.ForeColor = $pal.Fore
+                if ($ctrl -is [System.Windows.Forms.TextBox]) { $ctrl.BorderStyle = "FixedSingle" }
+            }
+            if ($ctrl -is [System.Windows.Forms.Label] -or $ctrl -is [System.Windows.Forms.CheckBox]) {
+                $ctrl.ForeColor = $pal.Fore
+            }
         }
         
         if ($ctrl.Controls) {
@@ -399,7 +512,7 @@ function Detect-SystemTheme {
 }
 
 # ==========================================
-# 7. JDOWNLOADER LOGIC (Existing)
+# 7. JDOWNLOADER LOGIC
 # ==========================================
 function Detect-JDPath {
     $paths = @("C:\Program Files\JDownloader", "C:\Program Files (x86)\JDownloader", "$env:LOCALAPPDATA\JDownloader 2", "$env:USERPROFILE\AppData\Local\JDownloader 2.0")
@@ -407,19 +520,32 @@ function Detect-JDPath {
     return $null
 }
 
+# Safer path-based kill logic
 function Kill-JDownloader {
     Log-Status "Terminating JDownloader processes..."
-    Get-Process | Where-Object { $_.ProcessName -match "JDownloader|javaw" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    $procs = Get-Process -Name "javaw", "JDownloader2" -ErrorAction SilentlyContinue
+    
+    foreach ($p in $procs) {
+        try {
+            $path = $p.MainModule.FileName
+            if ($path -match "JDownloader") {
+                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+             if ($p.ProcessName -eq "JDownloader2") { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+        }
+    }
     Start-Sleep -Seconds 1
 }
 
+# Exclude more temp folders
 function Backup-JD {
     param([string]$InstallPath)
     $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
     $backupRoot = "$InstallPath\cfg-backup\$stamp"
     if (Test-Path "$InstallPath\cfg") {
         New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-        Copy-Item "$InstallPath\cfg\*" $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Get-ChildItem "$InstallPath\cfg" -Exclude "tmp","logs","*.part","*.tmp","linkcollector" | Copy-Item -Destination $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -475,10 +601,13 @@ function Task-PatchExeIcon {
     if (Test-Path $ResHackerExe) {
         $targets = @("$InstallPath\JDownloader2.exe", "$InstallPath\Uninstall JDownloader.exe")
         foreach ($exe in $targets) {
+            # Check write permission/existence first
             if (Test-Path $exe) {
-                Stop-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($exe)) -Force -ErrorAction SilentlyContinue; Start-Sleep 1
-                $bak = "$exe.bak"; if (-not (Test-Path $bak)) { Move-Item -Path $exe -Destination $bak -Force } else { Remove-Item $exe -Force -ErrorAction SilentlyContinue }
-                Start-Process -FilePath $ResHackerExe -ArgumentList "-open `"$bak`" -save `"$exe`" -action addoverwrite -res `"$IconFile`" -mask ICONGROUP,MAINICON,0" -Wait -WindowStyle Hidden
+                try {
+                    Stop-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($exe)) -Force -ErrorAction SilentlyContinue; Start-Sleep 1
+                    $bak = "$exe.bak"; if (-not (Test-Path $bak)) { Move-Item -Path $exe -Destination $bak -Force } else { Remove-Item $exe -Force -ErrorAction SilentlyContinue }
+                    Start-Process -FilePath $ResHackerExe -ArgumentList "-open `"$bak`" -save `"$exe`" -action addoverwrite -res `"$IconFile`" -mask ICONGROUP,MAINICON,0" -Wait -WindowStyle Hidden
+                } catch { Log-Status "Failed to patch $exe - Access Denied?" "WARN" }
             }
         }
         Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep 1; Start-Process explorer.exe
@@ -540,60 +669,238 @@ function Execute-Operations {
     $JDPath = $GUI_State.InstallPath
     if ([string]::IsNullOrWhiteSpace($JDPath)) { Log-Status "Invalid path." "ERROR"; return }
     
-    if ($GUI_State.Mode -ne "Modify") {
-        if (-not (Task-Install -Source "GitHub")) { Task-Install -Source "Mega" }
-        $JDPath = Detect-JDPath
+    # Catch-all error trap
+    try {
+        if ($GUI_State.Mode -ne "Modify") {
+            if (-not (Task-Install -Source "GitHub")) { Task-Install -Source "Mega" }
+            $JDPath = Detect-JDPath
+        }
+        
+        $ProgressBar.Style = "Marquee"
+        Kill-JDownloader; Backup-JD -InstallPath $JDPath
+        
+        # [Fix] Use .Contains instead of .ContainsKey for OrderedDictionary
+        if ($ThemeDefinitions.Contains($GUI_State.ThemeName)) {
+            $Theme = $ThemeDefinitions[$GUI_State.ThemeName]
+            $cfgPath = "$JDPath\cfg"
+            $lafPath = "$cfgPath\laf"; if (-not (Test-Path $lafPath)) { New-Item -ItemType Directory -Path $lafPath -Force | Out-Null }
+            
+            Download-File -Url $Theme.JsonUrl -Destination "$lafPath\$($Theme.JsonName)" | Out-Null
+            
+            if ($IconDefinitions.Contains($GUI_State.IconPack)) {
+                $IconDef = $IconDefinitions[$GUI_State.IconPack]
+                Task-PatchLaf -JsonPath "$lafPath\$($Theme.JsonName)" -IconSetId $IconDef.ID -WindowDecorations $GUI_State.WindowDec
+                Task-ExtractIcons -ZipUrl $IconDef.Url -InstallPath $JDPath -TargetIconSet $IconDef.ID
+            }
+            
+            try {
+                $guiObj = $Template_GUI | ConvertFrom-Json
+                $guiObj.lookandfeeltheme = $Theme.LafID
+                $guiObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json" -Encoding UTF8
+            } catch {}
+        }
+
+        try {
+            $genObj = $Template_General | ConvertFrom-Json
+            $genObj.maxsimultanedownloads = [int]$GUI_State.MaxSim
+            $genObj.defaultdownloadfolder = $GUI_State.DlFolder.Replace("\", "\\")
+            $genObj.pausespeed = [int]$GUI_State.PauseSpeed
+            $genObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GeneralSettings.json" -Encoding UTF8
+        } catch {}
+
+        try {
+            $trayObj = $Template_Tray | ConvertFrom-Json
+            $trayObj.startminimizedenabled = $GUI_State.StartMin
+            $trayObj.onminimizeaction = if ($GUI_State.MinToTray) { "TO_TASKBAR_IF_ALLOWED" } else { "TO_TASKBAR" }
+            if ($GUI_State.ContainsKey("CloseToTray")) { $trayObj.oncloseaction = if ($GUI_State.CloseToTray) { "TO_TASKBAR" } else { "ASK" } }
+            $trayObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.gui.jdtrayicon.TrayExtension.json" -Encoding UTF8
+        } catch {}
+
+        Task-DeepHardening -cfgPath $cfgPath
+        if ($GUI_State.ForceMinimal) { Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.MainTabLayout.json" -DataHash @{compactmodetabs=$true; hidemyjdtab=$true} }
+        Task-NukeBanners -InstallPath $JDPath
+        if ($GUI_State.PatchExe) { Task-PatchExeIcon -InstallPath $JDPath }
+        
+        $ProgressBar.Style = "Blocks"; $ProgressBar.Value = 100
+        Log-Status "Operations completed." "SUCCESS"
+        if ($GUI_State.AutoUpdate) { Trigger-Update -InstallPath $JDPath }
+        Save-Settings -SettingsObj $GUI_State
+    } catch {
+        Log-Status "CRITICAL ERROR: $_" "FATAL"
+        Log-Status $($_.ScriptStackTrace) "DEBUG"
+        [System.Windows.Forms.MessageBox]::Show("An error occurred during execution. check logs. `nError: $_", "Error")
     }
-    
-    $ProgressBar.Style = "Marquee"
-    Kill-JDownloader; Backup-JD -InstallPath $JDPath
-    
-    $Theme = $ThemeDefinitions[$GUI_State.ThemeName]
-    $IconDef = $IconDefinitions[$GUI_State.IconPack]
-    $cfgPath = "$JDPath\cfg"
-    $lafPath = "$cfgPath\laf"; if (-not (Test-Path $lafPath)) { New-Item -ItemType Directory -Path $lafPath -Force | Out-Null }
-    
-    Download-File -Url $Theme.JsonUrl -Destination "$lafPath\$($Theme.JsonName)" | Out-Null
-    Task-PatchLaf -JsonPath "$lafPath\$($Theme.JsonName)" -IconSetId $IconDef.ID -WindowDecorations $GUI_State.WindowDec
-    Task-ExtractIcons -ZipUrl $IconDef.Url -InstallPath $JDPath -TargetIconSet $IconDef.ID
-    
-    try {
-        $guiObj = $Template_GUI | ConvertFrom-Json
-        $guiObj.lookandfeeltheme = $Theme.LafID
-        $guiObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json" -Encoding UTF8
-    } catch {}
-
-    try {
-        $genObj = $Template_General | ConvertFrom-Json
-        $genObj.maxsimultanedownloads = [int]$GUI_State.MaxSim
-        $genObj.defaultdownloadfolder = $GUI_State.DlFolder.Replace("\", "\\")
-        $genObj.pausespeed = [int]$GUI_State.PauseSpeed
-        $genObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GeneralSettings.json" -Encoding UTF8
-    } catch {}
-
-    try {
-        $trayObj = $Template_Tray | ConvertFrom-Json
-        $trayObj.startminimizedenabled = $GUI_State.StartMin
-        $trayObj.onminimizeaction = if ($GUI_State.MinToTray) { "TO_TASKBAR_IF_ALLOWED" } else { "TO_TASKBAR" }
-        if ($GUI_State.ContainsKey("CloseToTray")) { $trayObj.oncloseaction = if ($GUI_State.CloseToTray) { "TO_TASKBAR" } else { "ASK" } }
-        $trayObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.gui.jdtrayicon.TrayExtension.json" -Encoding UTF8
-    } catch {}
-
-    Task-DeepHardening -cfgPath $cfgPath
-    if ($GUI_State.ForceMinimal) { Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.MainTabLayout.json" -DataHash @{compactmodetabs=$true; hidemyjdtab=$true} }
-    Task-NukeBanners -InstallPath $JDPath
-    if ($GUI_State.PatchExe) { Task-PatchExeIcon -InstallPath $JDPath }
-    
-    $ProgressBar.Style = "Blocks"; $ProgressBar.Value = 100
-    Log-Status "Operations completed." "SUCCESS"
-    if ($GUI_State.AutoUpdate) { Trigger-Update -InstallPath $JDPath }
-    Save-Settings -SettingsObj $GUI_State
 }
 
 # ==========================================
-# 8. GUI CONSTRUCTION (Enhanced)
+# 8. GUI CONSTRUCTION (Refined Layout)
 # ==========================================
 
+# UI Builder Functions with proper Anchors and DPI sizing
+
+function New-Panel {
+    param($Name, $Parent, $Dock, $Size, $Location, $BackColor, $Tag, $Padding, $Anchor)
+    $p = New-Object System.Windows.Forms.Panel
+    if($Name){$p.Name=$Name}
+    if($Dock){$p.Dock=$Dock}
+    if($Size){$p.Size=$Size}
+    if($Location){$p.Location=$Location}
+    if($BackColor){$p.BackColor=$BackColor}
+    if($Tag){$p.Tag=$Tag}
+    if($Padding){$p.Padding=$Padding}
+    if($Anchor){$p.Anchor=$Anchor}
+    if($Parent){ [void]$Parent.Controls.Add($p) }
+    return $p
+}
+
+function New-Button {
+    param($Name, $Parent, $Text, $LangKey, $Location, $Size, $Tag, $Click, $Anchor)
+    $b = New-Object System.Windows.Forms.Button
+    if($Name){$b.Name=$Name}
+    $b.FlatStyle = "Flat"
+    $b.FlatAppearance.BorderSize = 0
+    if($Location){$b.Location=$Location}
+    if($Size){$b.Size=$Size}
+    if($Tag){$b.Tag=$Tag}
+    if($Anchor){$b.Anchor=$Anchor}
+    if($Click){$b.Add_Click($Click)}
+    
+    if($LangKey) {
+        Register-LangControl -Control $b -Key $LangKey
+    } elseif ($Text) {
+        $b.Text = $Text
+    }
+    
+    # Defaults + Hover Effect
+    # UPDATED FONT SIZE: 14pt (was 12)
+    $b.Font = New-Object System.Drawing.Font("Segoe UI",14)
+    $b.AutoSize = $false
+    
+    if ($Tag -eq "SidebarBtn") { 
+        # UPDATED FONT SIZE: 14pt Bold (was 12)
+        $b.Font = New-Object System.Drawing.Font("Segoe UI",14,[System.Drawing.FontStyle]::Bold) 
+    } elseif ($Tag -match "Primary|Danger|Success") {
+        # UPDATED FONT SIZE: 14pt Bold (was 12)
+        $b.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+        # Add hover effect with local storage
+        $b.Add_MouseEnter({ 
+            $this | Add-Member -MemberType NoteProperty -Name "LastColor" -Value $this.BackColor -Force -ErrorAction SilentlyContinue
+            $this.BackColor = [System.Windows.Forms.ControlPaint]::Light($this.BackColor, 0.2) 
+        })
+        $b.Add_MouseLeave({ 
+            if ($this.LastColor) { $this.BackColor = $this.LastColor } 
+        })
+    }
+
+    if($Parent){ [void]$Parent.Controls.Add($b) }
+    return $b
+}
+
+function New-Label {
+    param($Name, $Parent, $Text, $LangKey, $Location, $Font, $AutoSize=$true, $Tag, $Size, $Anchor)
+    $l = New-Object System.Windows.Forms.Label
+    if($Name){$l.Name=$Name}
+    if($Location){$l.Location=$Location}
+    $l.AutoSize=$AutoSize
+    if($Size){$l.Size=$Size}
+    if($Tag){$l.Tag=$Tag}
+    if($Anchor){$l.Anchor=$Anchor}
+    
+    # UPDATED FONT SIZES
+    if ($Font) { $l.Font = $Font } 
+    elseif ($Tag -eq "SectionHeader") { $l.Font = New-Object System.Drawing.Font("Segoe UI",20,[System.Drawing.FontStyle]::Bold) } 
+    elseif ($Tag -eq "SubHeader") { $l.Font = New-Object System.Drawing.Font("Segoe UI",14) } 
+    else { $l.Font = New-Object System.Drawing.Font("Segoe UI",13) } 
+
+    if($LangKey) {
+        Register-LangControl -Control $l -Key $LangKey
+    } elseif ($Text) {
+        $l.Text = $Text
+    }
+    
+    if($Parent){ [void]$Parent.Controls.Add($l) }
+    return $l
+}
+
+function New-TextBox {
+    param($Name, $Parent, $Location, $Size, $Text, $Tag, $ReadOnly=$false, $Anchor)
+    $t = New-Object System.Windows.Forms.TextBox
+    if($Name){$t.Name=$Name}
+    if($Location){$t.Location=$Location}
+    if($Size){$t.Size=$Size}
+    if($Text){$t.Text=$Text}
+    if($Tag){$t.Tag=$Tag}
+    if($Anchor){$t.Anchor=$Anchor}
+    $t.ReadOnly=$ReadOnly
+    # UPDATED FONT SIZE: 12pt (was 10)
+    $t.Font = New-Object System.Drawing.Font("Segoe UI",12)
+    $t.BorderStyle = "FixedSingle"
+    
+    if($Parent){ [void]$Parent.Controls.Add($t) }
+    return $t
+}
+
+function New-ComboBox {
+    param($Name, $Parent, $Location, $Size, $Tag, $Items, $SelectedIndex=0, $Anchor)
+    $c = New-Object System.Windows.Forms.ComboBox
+    if($Name){$c.Name=$Name}
+    if($Location){$c.Location=$Location}
+    if($Size){$c.Size=$Size}
+    if($Tag){$c.Tag=$Tag}
+    if($Anchor){$c.Anchor=$Anchor}
+    $c.DropDownStyle="DropDownList"
+    $c.IntegralHeight = $false # prevents resizing weirdly
+    # UPDATED FONT SIZE: 12pt (was default)
+    $c.Font = New-Object System.Drawing.Font("Segoe UI",12)
+    # Ensure Add() output is suppressed
+    if($Items){ foreach($i in $Items){ [void]$c.Items.Add($i) } }
+    if($SelectedIndex -ge 0 -and $c.Items.Count -gt 0){$c.SelectedIndex=$SelectedIndex}
+    
+    if($Parent){ [void]$Parent.Controls.Add($c) }
+    return $c
+}
+
+function New-CheckBox {
+    param($Name, $Parent, $Text, $LangKey, $Location, $Tag, $Checked=$false, $Anchor)
+    $c = New-Object System.Windows.Forms.CheckBox
+    if($Name){$c.Name=$Name}
+    if($Location){$c.Location=$Location}
+    if($Tag){$c.Tag=$Tag}
+    if($Anchor){$c.Anchor=$Anchor}
+    $c.AutoSize = $true
+    $c.Checked = $Checked
+    # UPDATED FONT SIZE: 12pt (was 10)
+    $c.Font = New-Object System.Drawing.Font("Segoe UI",12)
+
+    if($LangKey) {
+        Register-LangControl -Control $c -Key $LangKey
+    } elseif ($Text) {
+        $c.Text = $Text
+    }
+
+    if($Parent){ [void]$Parent.Controls.Add($c) }
+    return $c
+}
+
+function New-NumericUpDown {
+    param($Name, $Parent, $Location, $Tag, $Min, $Max, $Value, $Anchor)
+    $n = New-Object System.Windows.Forms.NumericUpDown
+    if($Name){$n.Name=$Name}
+    if($Location){$n.Location=$Location}
+    if($Tag){$n.Tag=$Tag}
+    if($Anchor){$n.Anchor=$Anchor}
+    if($Min){$n.Minimum=$Min}
+    if($Max){$n.Maximum=$Max}
+    if($Value){$n.Value=$Value}
+    # UPDATED FONT SIZE: 12pt
+    $n.Font = New-Object System.Drawing.Font("Segoe UI",12)
+    $n.Size = New-Object System.Drawing.Size(120, 30) # Increased height
+    
+    if($Parent){ [void]$Parent.Controls.Add($n) }
+    return $n
+}
+
+# --- Main Form ---
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $FormW = [int]($screen.Width * 0.75)
 $FormH = [int]($screen.Height * 0.85)
@@ -605,138 +912,107 @@ $Form.StartPosition = "CenterScreen"
 $Form.FormBorderStyle = "Sizable"
 $Form.BackColor = [System.Drawing.Color]::FromArgb(30,30,30)
 $Form.ForeColor = [System.Drawing.Color]::White
+$Form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+$Form.AutoScaleMode = "Dpi"
+$Form.WindowState = 'Maximized'
 
-# Sidebar (Left Dock)
-$Sidebar = New-Object System.Windows.Forms.Panel
-$Sidebar.Size = New-Object System.Drawing.Size(220, $FormH)
-$Sidebar.Dock = "Left"
-$Sidebar.BackColor = [System.Drawing.Color]::FromArgb(22,22,22)
-$Sidebar.Name = "Sidebar"
-$Form.Controls.Add($Sidebar)
 
-function New-NavBtn {
-    param($text, $y)
-    $btn = New-Object System.Windows.Forms.Button
-    $btn.Text = $text
-    $btn.Location = New-Object System.Drawing.Point(10,$y)
-    $btn.Size = New-Object System.Drawing.Size(200,40)
-    $btn.FlatStyle = "Flat"
-    $btn.BackColor = [System.Drawing.Color]::FromArgb(40,40,40)
-    $btn.ForeColor = "White"
-    $btn.Font = New-Object System.Drawing.Font("Segoe UI",11,[System.Drawing.FontStyle]::Bold)
-    $btn.FlatAppearance.BorderSize = 0
-    $btn.Tag = "SidebarBtn"
-    return $btn
-}
+# Sidebar (Left Dock) - Increased Width to 260 for larger fonts
+$Sidebar = New-Panel -Name "Sidebar" -Parent $Form -Dock "Left" -Size (New-Object System.Drawing.Size(260, $FormH)) -Tag "Sidebar"
 
-$BtnDashboard   = New-NavBtn $Lang.Dashboard    20
-$BtnInstallation= New-NavBtn $Lang.Installation 70
-$BtnTheme       = New-NavBtn $Lang.Themes      120
-$BtnBehavior    = New-NavBtn $Lang.Behavior    170
-$BtnHardening   = New-NavBtn $Lang.Hardening   220
-$BtnRepair      = New-NavBtn $Lang.Repair      270
-
-$Sidebar.Controls.AddRange(@($BtnDashboard, $BtnInstallation, $BtnTheme, $BtnBehavior, $BtnHardening, $BtnRepair))
+# Dynamic Sidebar Layout Calculation
+[int]$sbY = 20
+[int]$sbH = 50 # Increased Button Height
+[int]$sbGap = 10
+$BtnDashboard    = New-Button -Parent $Sidebar -LangKey "Dashboard"    -Location (New-Object System.Drawing.Point(10,$sbY))  -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnInstallation = New-Button -Parent $Sidebar -LangKey "Installation" -Location (New-Object System.Drawing.Point(10,$sbY))  -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnTheme        = New-Button -Parent $Sidebar -LangKey "Themes"       -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnBehavior     = New-Button -Parent $Sidebar -LangKey "Behavior"     -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnHardening    = New-Button -Parent $Sidebar -LangKey "Hardening"    -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnRepair       = New-Button -Parent $Sidebar -LangKey "Repair"       -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
 
 # Footer (Bottom Dock)
-$Footer = New-Object System.Windows.Forms.Panel
-$Footer.Size = New-Object System.Drawing.Size($FormW, 50)
-$Footer.Dock = "Bottom"
-$Footer.BackColor = [System.Drawing.Color]::FromArgb(22,22,22)
-$Footer.Name = "Footer"
-$Form.Controls.Add($Footer)
+$Footer = New-Panel -Name "Footer" -Parent $Form -Dock "Bottom" -Size (New-Object System.Drawing.Size($FormW, 60)) -Tag "Footer"
 
-$BtnExec = New-Object System.Windows.Forms.Button
-$BtnExec.Text = $Lang.Execute
-$BtnExec.Location = New-Object System.Drawing.Point(220, 5) # Offset from sidebar
-$BtnExec.Size = New-Object System.Drawing.Size(360, 40)
-$BtnExec.BackColor = [System.Drawing.Color]::FromArgb(30,144,255)
-$BtnExec.ForeColor = "White"
-$BtnExec.FlatStyle = "Flat"
-$BtnExec.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-$Footer.Controls.Add($BtnExec)
+$BtnExec = New-Button -Parent $Footer -LangKey "Execute" -Location (New-Object System.Drawing.Point(280, 8)) -Size (New-Object System.Drawing.Size(360, 44)) -Tag "PrimaryButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left)
 
 $ProgressBar = New-Object System.Windows.Forms.ProgressBar
-$ProgressBar.Location = New-Object System.Drawing.Point(600, 15)
-$ProgressBar.Size = New-Object System.Drawing.Size(300, 20)
+$ProgressBar.Location = New-Object System.Drawing.Point(660, 20)
+$ProgressBar.Size = New-Object System.Drawing.Size(280, 25)
 $ProgressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$Footer.Controls.Add($ProgressBar)
+[void]$Footer.Controls.Add($ProgressBar)
 
-$StatusLabel = New-Object System.Windows.Forms.Label
-$StatusLabel.Text = $Lang.Status
-$StatusLabel.ForeColor = "LightGray"
-$StatusLabel.Location = New-Object System.Drawing.Point(920, 15)
-$StatusLabel.AutoSize = $true
-$StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
-$StatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$Footer.Controls.Add($StatusLabel)
+$StatusLabel = New-Label -Parent $Footer -LangKey "Status" -Location (New-Object System.Drawing.Point(960, 20)) -Font (New-Object System.Drawing.Font("Segoe UI", 14)) -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
 
-# Main Panel (Fill Rest)
-$MainPanel = New-Object System.Windows.Forms.Panel
-$MainPanel.Dock = "Fill"
-$MainPanel.BackColor = [System.Drawing.Color]::FromArgb(28,28,28)
-$MainPanel.Name = "MainPanel"
-$MainPanel.Padding = New-Object System.Windows.Forms.Padding(20)
-$Form.Controls.Add($MainPanel)
-$MainPanel.BringToFront()
+# Main Panel (Fill Rest) - Increased Padding to 30
+$MainPanel = New-Panel -Name "MainPanel" -Parent $Form -Dock "Fill" -Tag "MainPanel" -Padding (New-Object System.Windows.Forms.Padding(30))
+[void]$MainPanel.BringToFront()
 
 # --- Pages Setup ---
 function New-PagePanel {
-    $p = New-Object System.Windows.Forms.Panel
-    $p.Dock = "Fill"
-    $p.BackColor = [System.Drawing.Color]::FromArgb(28,28,28)
+    $p = New-Panel -Dock "Fill" -Tag "Page" -BackColor ([System.Drawing.Color]::FromArgb(28,28,28))
     $p.Visible = $false
-    $p.Tag = "Page"
     return $p
 }
 
-$PageDashboard   = New-PagePanel; $PageInstallation= New-PagePanel; $PageTheme = New-PagePanel
-$PageBehavior    = New-PagePanel; $PageHardening   = New-PagePanel; $PageRepair = New-PagePanel
-$MainPanel.Controls.AddRange(@($PageDashboard, $PageInstallation, $PageTheme, $PageBehavior, $PageHardening, $PageRepair))
+$PageDashboard   = New-PagePanel; [void]$MainPanel.Controls.Add($PageDashboard)
+$PageInstallation= New-PagePanel; [void]$MainPanel.Controls.Add($PageInstallation)
+$PageTheme       = New-PagePanel; [void]$MainPanel.Controls.Add($PageTheme)
+$PageBehavior    = New-PagePanel; [void]$MainPanel.Controls.Add($PageBehavior)
+$PageHardening   = New-PagePanel; [void]$MainPanel.Controls.Add($PageHardening)
+$PageRepair      = New-PagePanel; [void]$MainPanel.Controls.Add($PageRepair)
+
+# Layout constants for Dynamic Positioning
+[int]$padX = 30
+[int]$padY = 30
+[int]$gapSmall = 15
+[int]$gapMed = 30
+[int]$gapLarge = 40
+[int]$inputH = 35
 
 # --- Dashboard Page ---
-$DashTitle = New-Object System.Windows.Forms.Label; $DashTitle.Text = $Lang.DashTitle; $DashTitle.Font = New-Object System.Drawing.Font("Segoe UI",18,[System.Drawing.FontStyle]::Bold); $DashTitle.Location = New-Object System.Drawing.Point(20,20); $DashTitle.AutoSize = $true; $PageDashboard.Controls.Add($DashTitle)
-$DashSub = New-Object System.Windows.Forms.Label; $DashSub.Text = $Lang.DashSub; $DashSub.Font = New-Object System.Drawing.Font("Segoe UI",11); $DashSub.Location = New-Object System.Drawing.Point(22,60); $DashSub.AutoSize = $true; $PageDashboard.Controls.Add($DashSub)
-$DashHint = New-Object System.Windows.Forms.Label; $DashHint.Text = $Lang.DashHint; $DashHint.Font = New-Object System.Drawing.Font("Segoe UI",9); $DashHint.ForeColor = [System.Drawing.Color]::LightGray; $DashHint.Location = New-Object System.Drawing.Point(22,90); $DashHint.AutoSize = $true; $PageDashboard.Controls.Add($DashHint)
+[int]$curY = $padY
+$DashTitle = New-Label -Parent $PageDashboard -LangKey "DashTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
+$curY += $DashTitle.Height + $gapSmall
+$DashSub = New-Label -Parent $PageDashboard -LangKey "DashSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
+$curY += $DashSub.Height + $gapSmall
+$DashHint = New-Label -Parent $PageDashboard -LangKey "DashHint" -Location (New-Object System.Drawing.Point($padX,$curY)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
+
+$curY += $DashHint.Height + 50 # Spacer
 
 # GUI Theme
-$LblGuiTheme = New-Object System.Windows.Forms.Label; $LblGuiTheme.Text = $Lang.GuiTheme; $LblGuiTheme.Location = New-Object System.Drawing.Point(22, 140); $LblGuiTheme.AutoSize=$true; $LblGuiTheme.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageDashboard.Controls.Add($LblGuiTheme)
-$CboGuiTheme = New-Object System.Windows.Forms.ComboBox; $CboGuiTheme.Location = New-Object System.Drawing.Point(22, 165); $CboGuiTheme.Width = 300; $CboGuiTheme.DropDownStyle="DropDownList"; $CboGuiTheme.BackColor=[System.Drawing.Color]::FromArgb(45,45,45); $CboGuiTheme.ForeColor="White"; 
-$GuiThemes.Keys | ForEach-Object { $CboGuiTheme.Items.Add($_) } | Out-Null
-$CboGuiTheme.SelectedIndex = 0; $PageDashboard.Controls.Add($CboGuiTheme)
+$LblGuiTheme = New-Label -Parent $PageDashboard -LangKey "GuiTheme" -Location (New-Object System.Drawing.Point($padX, $curY))
+$curY += $LblGuiTheme.Height + 5
+$CboGuiTheme = New-ComboBox -Parent $PageDashboard -Location (New-Object System.Drawing.Point($padX, $curY)) -Size (New-Object System.Drawing.Size(350, $inputH)) -Tag "Input" -Items $GuiThemes.Keys
+$CboGuiTheme.SelectedIndex = 0
 $CboGuiTheme.Add_SelectedIndexChanged({ Apply-GuiTheme -ThemeName $CboGuiTheme.Text })
 
+$curY += $inputH + $gapMed
+
 # Manual Language
-$LblLang = New-Object System.Windows.Forms.Label; $LblLang.Text = $Lang.Language; $LblLang.Location = New-Object System.Drawing.Point(22, 210); $LblLang.AutoSize=$true; $LblLang.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageDashboard.Controls.Add($LblLang)
-$CboLang = New-Object System.Windows.Forms.ComboBox; $CboLang.Location = New-Object System.Drawing.Point(22, 235); $CboLang.Width = 300; $CboLang.DropDownStyle="DropDownList"; $CboLang.BackColor=[System.Drawing.Color]::FromArgb(45,45,45); $CboLang.ForeColor="White"; 
-$AvailableLanguages.Keys | ForEach-Object { $CboLang.Items.Add($_) } | Out-Null
-$CboLang.SelectedItem = $CurrentLangCode; $PageDashboard.Controls.Add($CboLang)
+$LblLang = New-Label -Parent $PageDashboard -LangKey "Language" -Location (New-Object System.Drawing.Point($padX, $curY))
+$curY += $LblLang.Height + 5
+$CboLang = New-ComboBox -Parent $PageDashboard -Location (New-Object System.Drawing.Point($padX, $curY)) -Size (New-Object System.Drawing.Size(350, $inputH)) -Tag "Input" -Items $AvailableLanguages.Keys
+$CboLang.SelectedItem = $CurrentLangCode
 
-# Update Interface Text
+# Logic Update Interface
 function Update-InterfaceText {
-    $t = $Lang
-    $Form.Text = $t.Title
-    $BtnDashboard.Text = $t.Dashboard; $BtnInstallation.Text = $t.Installation; $BtnTheme.Text = $t.Themes
-    $BtnBehavior.Text = $t.Behavior; $BtnHardening.Text = $t.Hardening; $BtnRepair.Text = $t.Repair
-    $BtnExec.Text = $t.Execute; $StatusLabel.Text = $t.Status
-    
-    $DashTitle.Text = $t.DashTitle; $DashSub.Text = $t.DashSub; $DashHint.Text = $t.DashHint; $LblGuiTheme.Text = $t.GuiTheme; $LblLang.Text = $t.Language
-    
-    $InstTitle.Text = $t.InstTitle; $InstSub.Text = $t.InstSub; $LblPath.Text = $t.InstPath
-    $BtnBrowse.Text = $t.Browse; $BtnDetect.Text = $t.AutoDetect; $LblMode.Text = $t.InstMode; $LblModeHelp.Text = $t.InstModeHelp
-    
-    $ThemeTitle.Text = $t.ThemeTitle; $ThemeSub.Text = $t.ThemeSub; $LblThm.Text = $t.ThemePreset
-    $LblThemeLink.Text = $t.OpenGithub; $ChkWinDec.Text = $t.EnableWinDec; $ChkMinLay.Text = $t.CompactTabs
-    $LblIco.Text = $t.IconPack; $BtnOpenThm.Text = $t.OpenIconFolder
-
-    $BehTitle.Text = $t.BehTitle; $BehSub.Text = $t.BehSub; $LblSim.Text = $t.MaxSim; $LblSimHelp.Text = $t.MaxSimHelp
-    $LblPau.Text = $t.PauseSpeed; $LblPauHelp.Text = $t.PauseHelp; $LblDl.Text = $t.DefDlFolder
-    $BtnDl.Text = $t.Browse; $ChkMin.Text = $t.StartMin; $ChkTray.Text = $t.MinToTray; $ChkCloseTray.Text = $t.CloseToTray
-    
-    $HardTitle.Text = $t.HardTitle; $HardSub.Text = $t.HardSub; $ChkExe.Text = $t.DarkExe; $ChkUpdate.Text = $t.RunUpdate; $HardNote.Text = $t.HardNote
-    
-    $RepTitle.Text = $t.RepTitle; $RepSub.Text = $t.RepSub
-    # Note: Repair buttons text update requires storing refs or regenerating. Skipping for brevity as major labels are covered.
+    $Form.Text = $Lang.Title
+    # Iterate registry to update text
+    foreach ($entry in $script:LanguageRegistry) {
+        if ($entry.Control -and $entry.Control.IsDisposed -eq $false) {
+            $entry.Control.Text = $Lang[$entry.Key]
+            # Enforce auto-size checks for labels
+            if ($entry.Control -is [System.Windows.Forms.Label]) {
+                 # Force refresh of bounds if needed
+            }
+        }
+    }
 }
 
 $CboLang.Add_SelectedIndexChanged({
@@ -745,72 +1021,97 @@ $CboLang.Add_SelectedIndexChanged({
 })
 
 # --- Installation Page ---
-$InstTitle = New-Object System.Windows.Forms.Label; $InstTitle.Text = $Lang.InstTitle; $InstTitle.Font = New-Object System.Drawing.Font("Segoe UI",16,[System.Drawing.FontStyle]::Bold); $InstTitle.Location = New-Object System.Drawing.Point(20,20); $InstTitle.AutoSize = $true; $PageInstallation.Controls.Add($InstTitle)
-$InstSub = New-Object System.Windows.Forms.Label; $InstSub.Text = $Lang.InstSub; $InstSub.Font = New-Object System.Drawing.Font("Segoe UI",9); $InstSub.ForeColor = "LightGray"; $InstSub.Location = New-Object System.Drawing.Point(22,50); $InstSub.AutoSize = $true; $PageInstallation.Controls.Add($InstSub)
-$LblPath = New-Object System.Windows.Forms.Label; $LblPath.Text = $Lang.InstPath; $LblPath.Font = New-Object System.Drawing.Font("Segoe UI",11); $LblPath.Location = New-Object System.Drawing.Point(22,80); $LblPath.AutoSize = $true; $PageInstallation.Controls.Add($LblPath)
-$TxtPath = New-Object System.Windows.Forms.TextBox; $TxtPath.Size = New-Object System.Drawing.Size(530,30); $TxtPath.Location = New-Object System.Drawing.Point(22,105); $TxtPath.Font = New-Object System.Drawing.Font("Segoe UI",10); $TxtPath.BackColor = [System.Drawing.Color]::FromArgb(40,40,40); $TxtPath.ForeColor = "White"; $PageInstallation.Controls.Add($TxtPath)
-$BtnBrowse = New-Object System.Windows.Forms.Button; $BtnBrowse.Text = $Lang.Browse; $BtnBrowse.Size = New-Object System.Drawing.Size(110,27); $BtnBrowse.Location = New-Object System.Drawing.Point(560,104); $BtnBrowse.FlatStyle = "Flat"; $BtnBrowse.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $BtnBrowse.ForeColor = "White"; $BtnBrowse.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtPath.Text = $fbd.SelectedPath } }); $PageInstallation.Controls.Add($BtnBrowse)
-$BtnDetect = New-Object System.Windows.Forms.Button; $BtnDetect.Text = $Lang.AutoDetect; $BtnDetect.Size = New-Object System.Drawing.Size(110,27); $BtnDetect.Location = New-Object System.Drawing.Point(680,104); $BtnDetect.FlatStyle = "Flat"; $BtnDetect.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $BtnDetect.ForeColor = "White"; $BtnDetect.Add_Click({ $p = Detect-JDPath; if ($p) { $TxtPath.Text = $p; Log-Status "Auto detected: $p" } }); $PageInstallation.Controls.Add($BtnDetect)
-$LblMode = New-Object System.Windows.Forms.Label; $LblMode.Text = $Lang.InstMode; $LblMode.Font = New-Object System.Drawing.Font("Segoe UI",11); $LblMode.Location = New-Object System.Drawing.Point(22,150); $LblMode.AutoSize = $true; $PageInstallation.Controls.Add($LblMode)
-$CboMode = New-Object System.Windows.Forms.ComboBox; $CboMode.DropDownStyle = "DropDownList"; $CboMode.Items.AddRange(@("Modify Existing (keep current install)", "Clean Install (download from GitHub)", "Clean Install (manual Mega download)")); $CboMode.SelectedIndex = 0; $CboMode.Location = New-Object System.Drawing.Point(22,175); $CboMode.Size = New-Object System.Drawing.Size(450,30); $CboMode.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $CboMode.ForeColor = "White"; $PageInstallation.Controls.Add($CboMode)
-$LblModeHelp = New-Object System.Windows.Forms.Label; $LblModeHelp.Text = $Lang.InstModeHelp; $LblModeHelp.Font = New-Object System.Drawing.Font("Segoe UI",8); $LblModeHelp.ForeColor = "LightGray"; $LblModeHelp.Location = New-Object System.Drawing.Point(22,210); $LblModeHelp.Size = New-Object System.Drawing.Size(780,40); $LblModeHelp.AutoSize = $false; $PageInstallation.Controls.Add($LblModeHelp)
+$curY = $padY
+$InstTitle = New-Label -Parent $PageInstallation -LangKey "InstTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
+$curY += $InstTitle.Height + $gapSmall
+$InstSub = New-Label -Parent $PageInstallation -LangKey "InstSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
+$curY += $InstSub.Height + $gapLarge
+
+$LblPath = New-Label -Parent $PageInstallation -LangKey "InstPath" -Location (New-Object System.Drawing.Point($padX,$curY))
+$curY += $LblPath.Height + 5
+$TxtPath = New-TextBox -Parent $PageInstallation -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(600,$inputH)) -Tag "Input" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right)
+
+# Inline Validation
+$TxtPath.Add_TextChanged({
+    if ($TxtPath.Text.Length -gt 0 -and (-not (Test-Path $TxtPath.Text))) {
+        $TxtPath.BackColor = [System.Drawing.Color]::FromArgb(60,20,20) # Red-ish
+    } else {
+        $TxtPath.BackColor = [System.Drawing.Color]::FromArgb(40,40,40)
+    }
+})
+
+$BtnBrowse = New-Button -Parent $PageInstallation -LangKey "Browse" -Location (New-Object System.Drawing.Point(640,[int]($curY-1))) -Size (New-Object System.Drawing.Size(120,[int]($inputH+2))) -Tag "NavButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
+$BtnBrowse.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtPath.Text = $fbd.SelectedPath } })
+
+$BtnDetect = New-Button -Parent $PageInstallation -LangKey "AutoDetect" -Location (New-Object System.Drawing.Point(770,[int]($curY-1))) -Size (New-Object System.Drawing.Size(140,[int]($inputH+2))) -Tag "NavButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
+$BtnDetect.Add_Click({ $p = Detect-JDPath; if ($p) { $TxtPath.Text = $p; Log-Status "Auto detected: $p" } })
+
+$curY += $inputH + $gapMed
+
+$LblMode = New-Label -Parent $PageInstallation -LangKey "InstMode" -Location (New-Object System.Drawing.Point($padX,$curY))
+$curY += $LblMode.Height + 5
+$CboMode = New-ComboBox -Parent $PageInstallation -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(500,$inputH)) -Tag "Input" -Items @("Modify Existing (keep current install)", "Clean Install (download from GitHub)", "Clean Install (manual Mega download)")
+$curY += $inputH + $gapSmall
+$LblModeHelp = New-Label -Parent $PageInstallation -LangKey "InstModeHelp" -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(800,60)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
 
 # --- Themes Page ---
-$ThemeTitle = New-Object System.Windows.Forms.Label; $ThemeTitle.Text = $Lang.ThemeTitle; $ThemeTitle.Font = New-Object System.Drawing.Font("Segoe UI",16,[System.Drawing.FontStyle]::Bold); $ThemeTitle.Location = New-Object System.Drawing.Point(20,20); $ThemeTitle.AutoSize = $true; $PageTheme.Controls.Add($ThemeTitle)
-$ThemeSub = New-Object System.Windows.Forms.Label; $ThemeSub.Text = $Lang.ThemeSub; $ThemeSub.Font = New-Object System.Drawing.Font("Segoe UI",9); $ThemeSub.ForeColor = "LightGray"; $ThemeSub.Location = New-Object System.Drawing.Point(22,50); $ThemeSub.AutoSize = $true; $PageTheme.Controls.Add($ThemeSub)
-$LblThm = New-Object System.Windows.Forms.Label; $LblThm.Text = $Lang.ThemePreset; $LblThm.Location = New-Object System.Drawing.Point(22,80); $LblThm.AutoSize = $true; $LblThm.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageTheme.Controls.Add($LblThm)
-$CboTheme = New-Object System.Windows.Forms.ComboBox; $CboTheme.Location = New-Object System.Drawing.Point(22,105); $CboTheme.Width = 350; $CboTheme.DropDownStyle = "DropDownList"; $CboTheme.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $CboTheme.ForeColor = "White"; $ThemeDefinitions.Keys | ForEach-Object { $CboTheme.Items.Add($_) } | Out-Null; $CboTheme.SelectedIndex = 0; $PageTheme.Controls.Add($CboTheme)
+$curY = $padY
+$ThemeTitle = New-Label -Parent $PageTheme -LangKey "ThemeTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
+$curY += $ThemeTitle.Height + $gapSmall
+$ThemeSub = New-Label -Parent $PageTheme -LangKey "ThemeSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
+$curY += $ThemeSub.Height + $gapMed
 
-# NEW: Resizable anchored preview panel
-$PnlPreview = New-Object System.Windows.Forms.Panel
-$PnlPreview.Location = New-Object System.Drawing.Point(22,140)
+$LblThm = New-Label -Parent $PageTheme -LangKey "ThemePreset" -Location (New-Object System.Drawing.Point($padX,$curY))
+$curY += $LblThm.Height + 5
+$CboTheme = New-ComboBox -Parent $PageTheme -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(400, $inputH)) -Tag "Input" -Items $ThemeDefinitions.Keys
+
+$LblPreDesc = New-Label -Parent $PageTheme -Location (New-Object System.Drawing.Point([int]($padX + 420),$curY)) -Size (New-Object System.Drawing.Size(450,40)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right)
+
+$LblThemeLink = New-Object System.Windows.Forms.LinkLabel; 
+$LblThemeLink.Text = $Lang.OpenGithub; 
+$LblThemeLink.Location = New-Object System.Drawing.Point(880,[int]($curY+5)); 
+$LblThemeLink.AutoSize = $true; 
+$LblThemeLink.Font = New-Object System.Drawing.Font("Segoe UI", 12)
+$LblThemeLink.LinkColor = "DeepSkyBlue"; 
+$LblThemeLink.ActiveLinkColor = "DodgerBlue";
+$LblThemeLink.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+[void]$PageTheme.Controls.Add($LblThemeLink); 
+$LblThemeLink.Add_LinkClicked({ if ($LblThemeLink.Tag) { Start-Process $LblThemeLink.Tag | Out-Null } })
+
+$curY += $inputH + $gapMed
+
+# Resizable anchored preview panel - Moved further down for breathing room
+$PnlPreview = New-Panel -Name "PnlPreview" -Parent $PageTheme -Tag "PreviewPanel" -Location (New-Object System.Drawing.Point($padX,$curY))
 $PnlPreview.BorderStyle = "FixedSingle"
-$PnlPreview.BackColor = [System.Drawing.Color]::FromArgb(45,45,45)
-$PnlPreview.Name = "PnlPreview"
-# Anchor to top/left/right only, height will be controlled by our resize function
-$PnlPreview.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor `
-                     [System.Windows.Forms.AnchorStyles]::Left -bor `
-                     [System.Windows.Forms.AnchorStyles]::Right
-$PageTheme.Controls.Add($PnlPreview)
+$PnlPreview.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 
 $PicThemePreview = New-Object System.Windows.Forms.PictureBox
 $PicThemePreview.Dock = "Fill"
 $PicThemePreview.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
-$PnlPreview.Controls.Add($PicThemePreview)
+[void]$PnlPreview.Controls.Add($PicThemePreview)
 
-$LblPreDesc = New-Object System.Windows.Forms.Label; $LblPreDesc.Location = New-Object System.Drawing.Point(390,105); $LblPreDesc.Size = New-Object System.Drawing.Size(400,30); $LblPreDesc.AutoSize = $false; $LblPreDesc.Font = New-Object System.Drawing.Font("Segoe UI",9); $LblPreDesc.ForeColor = "Gainsboro"; $PageTheme.Controls.Add($LblPreDesc)
+# Anchored Bottom Controls for Theme Page - Taller to fit large controls
+[int]$BottomPanelH = 140
+$BottomPanel = New-Panel -Parent $PageTheme -Dock "Bottom" -Size (New-Object System.Drawing.Size(100, $BottomPanelH)) -BackColor ([System.Drawing.Color]::Transparent)
 
-$LblThemeLink = New-Object System.Windows.Forms.LinkLabel; $LblThemeLink.Text = $Lang.OpenGithub; $LblThemeLink.Location = New-Object System.Drawing.Point(800,105); $LblThemeLink.AutoSize = $true; $LblThemeLink.LinkColor = "DeepSkyBlue"; $LblThemeLink.ActiveLinkColor = "DodgerBlue"; $PageTheme.Controls.Add($LblThemeLink); $LblThemeLink.Add_LinkClicked({ if ($LblThemeLink.Tag) { Start-Process $LblThemeLink.Tag | Out-Null } })
+$ChkWinDec = New-CheckBox -Parent $BottomPanel -LangKey "EnableWinDec" -Location (New-Object System.Drawing.Point($padX,20)) -Checked $true
+$ChkMinLay = New-CheckBox -Parent $BottomPanel -LangKey "CompactTabs" -Location (New-Object System.Drawing.Point($padX,60))
+$LblIco = New-Label -Parent $BottomPanel -LangKey "IconPack" -Location (New-Object System.Drawing.Point([int]($padX + 400),20))
+$CboIcons = New-ComboBox -Parent $BottomPanel -Location (New-Object System.Drawing.Point([int]($padX + 400),55)) -Size (New-Object System.Drawing.Size(220, $inputH)) -Tag "Input" -Items $IconDefinitions.Keys
 
-# Anchored Bottom Controls for Theme Page
-$BottomPanel = New-Object System.Windows.Forms.Panel
-$BottomPanel.Dock = "Bottom"
-$BottomPanel.Height = 100
-$BottomPanel.BackColor = [System.Drawing.Color]::Transparent
-$PageTheme.Controls.Add($BottomPanel)
-
-$ChkWinDec = New-Object System.Windows.Forms.CheckBox; $ChkWinDec.Text = $Lang.EnableWinDec; $ChkWinDec.Location = New-Object System.Drawing.Point(22,10); $ChkWinDec.AutoSize = $true; $ChkWinDec.Checked = $true; $ChkWinDec.Font = New-Object System.Drawing.Font("Segoe UI",10); $BottomPanel.Controls.Add($ChkWinDec)
-$ChkMinLay = New-Object System.Windows.Forms.CheckBox; $ChkMinLay.Text = $Lang.CompactTabs; $ChkMinLay.Location = New-Object System.Drawing.Point(22,40); $ChkMinLay.AutoSize = $true; $ChkMinLay.Font = New-Object System.Drawing.Font("Segoe UI",10); $BottomPanel.Controls.Add($ChkMinLay)
-$LblIco = New-Object System.Windows.Forms.Label; $LblIco.Text = $Lang.IconPack; $LblIco.Location = New-Object System.Drawing.Point(400,10); $LblIco.AutoSize = $true; $LblIco.Font = New-Object System.Drawing.Font("Segoe UI",11); $BottomPanel.Controls.Add($LblIco)
-$CboIcons = New-Object System.Windows.Forms.ComboBox; $CboIcons.Location = New-Object System.Drawing.Point(400,35); $CboIcons.Width = 200; $CboIcons.DropDownStyle = "DropDownList"; $CboIcons.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $CboIcons.ForeColor = "White"; $IconDefinitions.Keys | ForEach-Object { $CboIcons.Items.Add($_) } | Out-Null; $CboIcons.SelectedIndex = 0; $BottomPanel.Controls.Add($CboIcons)
-$BtnOpenThm = New-Object System.Windows.Forms.Button; $BtnOpenThm.Text = $Lang.OpenIconFolder; $BtnOpenThm.Location = New-Object System.Drawing.Point(620,34); $BtnOpenThm.Size = New-Object System.Drawing.Size(120,27); $BtnOpenThm.FlatStyle = "Flat"; $BtnOpenThm.BackColor = [System.Drawing.Color]::FromArgb(64,64,64); $BtnOpenThm.ForeColor = "White"; $BtnOpenThm.Add_Click({ $p = "$($TxtPath.Text)\themes\standard\org\jdownloader\images"; if (Test-Path $p) { Invoke-Item $p } }); $BottomPanel.Controls.Add($BtnOpenThm)
+$BtnOpenThm = New-Button -Parent $BottomPanel -LangKey "OpenIconFolder" -Location (New-Object System.Drawing.Point([int]($padX + 640),54)) -Size (New-Object System.Drawing.Size(180,[int]($inputH+2))) -Tag "NavButton"
+$BtnOpenThm.Add_Click({ $p = "$($TxtPath.Text)\themes\standard\org\jdownloader\images"; if (Test-Path $p) { Invoke-Item $p } })
 
 function Resize-ThemePreview {
-    # Padding around the preview area
-    $left = 22
-    $top = 140
-    $bottomMargin = 120   # leave room above the bottom panel
-    $rightMargin = 22
-
-    # Compute available size inside PageTheme
-    $availWidth  = $PageTheme.ClientSize.Width  - $left - $rightMargin
-    $availHeight = $PageTheme.ClientSize.Height - $top  - $bottomMargin
-
-    if ($availWidth -lt 400)  { $availWidth  = 400 }
-    if ($availHeight -lt 220) { $availHeight = 220 }
-
-    $PnlPreview.Location = New-Object System.Drawing.Point($left, $top)
-    $PnlPreview.Size     = New-Object System.Drawing.Size($availWidth, $availHeight)
+    # Logic to prevent overlapping and stretching
+    if ($Form.WindowState -eq "Minimized") { return }
+    $topMargin = $PnlPreview.Location.Y # Dynamic top
+    $botMargin = $BottomPanel.Height # Dynamic bottom reference
+    $availH = $PageTheme.ClientSize.Height - $topMargin - $botMargin - 30
+    
+    if ($availH -lt 150) { $availH = 150 }
+    
+    $PnlPreview.Height = $availH
 }
 
 function Update-ThemePreview {
@@ -819,7 +1120,14 @@ function Update-ThemePreview {
         $LblPreDesc.Text = "$($sel.DisplayName) - $($sel.Desc)"
         $LblThemeLink.Tag = $sel.ThemeUrl
         if ($ThemeImageCache.ContainsKey($CboTheme.Text) -and $ThemeImageCache[$CboTheme.Text]) {
-            $PicThemePreview.Image = $ThemeImageCache[$CboTheme.Text]
+            if ($PicThemePreview.IsHandleCreated) {
+                 $PicThemePreview.Invoke([Action]{
+                    $PicThemePreview.Image = $ThemeImageCache[$CboTheme.Text]
+                    $PicThemePreview.Refresh()
+                })
+            } else {
+                 $PicThemePreview.Image = $ThemeImageCache[$CboTheme.Text]
+            }
         } else {
             $PicThemePreview.Image = $null
         }
@@ -828,53 +1136,86 @@ function Update-ThemePreview {
 $CboTheme.Add_SelectedIndexChanged({ Update-ThemePreview })
 
 # --- Behavior Page ---
-$BehTitle = New-Object System.Windows.Forms.Label; $BehTitle.Text = $Lang.BehTitle; $BehTitle.Font = New-Object System.Drawing.Font("Segoe UI",16,[System.Drawing.FontStyle]::Bold); $BehTitle.Location = New-Object System.Drawing.Point(20,20); $BehTitle.AutoSize = $true; $PageBehavior.Controls.Add($BehTitle)
-$BehSub = New-Object System.Windows.Forms.Label; $BehSub.Text = $Lang.BehSub; $BehSub.Font = New-Object System.Drawing.Font("Segoe UI",9); $BehSub.ForeColor = "LightGray"; $BehSub.Location = New-Object System.Drawing.Point(22,50); $BehSub.AutoSize = $true; $PageBehavior.Controls.Add($BehSub)
-$LblSim = New-Object System.Windows.Forms.Label; $LblSim.Text = $Lang.MaxSim; $LblSim.Location = New-Object System.Drawing.Point(22,80); $LblSim.AutoSize = $true; $LblSim.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageBehavior.Controls.Add($LblSim)
-$NumSim = New-Object System.Windows.Forms.NumericUpDown; $NumSim.Location = New-Object System.Drawing.Point(260,78); $NumSim.Minimum = 1; $NumSim.Maximum = 20; $NumSim.Value = 3; $NumSim.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $NumSim.ForeColor = "White"; $PageBehavior.Controls.Add($NumSim)
-$LblSimHelp = New-Object System.Windows.Forms.Label; $LblSimHelp.Text = $Lang.MaxSimHelp; $LblSimHelp.Font = New-Object System.Drawing.Font("Segoe UI",8); $LblSimHelp.ForeColor = "LightGray"; $LblSimHelp.Location = New-Object System.Drawing.Point(22,105); $LblSimHelp.AutoSize = $true; $PageBehavior.Controls.Add($LblSimHelp)
-$LblPau = New-Object System.Windows.Forms.Label; $LblPau.Text = $Lang.PauseSpeed; $LblPau.Location = New-Object System.Drawing.Point(22,135); $LblPau.AutoSize = $true; $LblPau.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageBehavior.Controls.Add($LblPau)
-$NumPause = New-Object System.Windows.Forms.NumericUpDown; $NumPause.Location = New-Object System.Drawing.Point(260,133); $NumPause.Minimum = 0; $NumPause.Maximum = 1000000; $NumPause.Value = 10240; $NumPause.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $NumPause.ForeColor = "White"; $PageBehavior.Controls.Add($NumPause)
-$LblPauHelp = New-Object System.Windows.Forms.Label; $LblPauHelp.Text = $Lang.PauseHelp; $LblPauHelp.Font = New-Object System.Drawing.Font("Segoe UI",8); $LblPauHelp.ForeColor = "LightGray"; $LblPauHelp.Location = New-Object System.Drawing.Point(22,160); $LblPauHelp.AutoSize = $true; $PageBehavior.Controls.Add($LblPauHelp)
-$LblDl = New-Object System.Windows.Forms.Label; $LblDl.Text = $Lang.DefDlFolder; $LblDl.Location = New-Object System.Drawing.Point(22,190); $LblDl.AutoSize = $true; $LblDl.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageBehavior.Controls.Add($LblDl)
-$TxtDl = New-Object System.Windows.Forms.TextBox; $TxtDl.Location = New-Object System.Drawing.Point(22,215); $TxtDl.Width = 530; $TxtDl.Text = "C:\Downloads"; $TxtDl.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $TxtDl.ForeColor = "White"; $PageBehavior.Controls.Add($TxtDl)
-$BtnDl = New-Object System.Windows.Forms.Button; $BtnDl.Text = $Lang.Browse; $BtnDl.Location = New-Object System.Drawing.Point(560,214); $BtnDl.Width = 100; $BtnDl.FlatStyle = "Flat"; $BtnDl.BackColor = [System.Drawing.Color]::FromArgb(45,45,45); $BtnDl.ForeColor = "White"; $BtnDl.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtDl.Text = $fbd.SelectedPath } }); $PageBehavior.Controls.Add($BtnDl)
-$ChkMin = New-Object System.Windows.Forms.CheckBox; $ChkMin.Text = $Lang.StartMin; $ChkMin.Location = New-Object System.Drawing.Point(22,260); $ChkMin.AutoSize = $true; $ChkMin.Font = New-Object System.Drawing.Font("Segoe UI",10); $PageBehavior.Controls.Add($ChkMin)
-$ChkTray = New-Object System.Windows.Forms.CheckBox; $ChkTray.Text = $Lang.MinToTray; $ChkTray.Location = New-Object System.Drawing.Point(22,290); $ChkTray.AutoSize = $true; $ChkTray.Checked = $true; $ChkTray.Font = New-Object System.Drawing.Font("Segoe UI",10); $PageBehavior.Controls.Add($ChkTray)
-$ChkCloseTray = New-Object System.Windows.Forms.CheckBox; $ChkCloseTray.Text = $Lang.CloseToTray; $ChkCloseTray.Location = New-Object System.Drawing.Point(22,320); $ChkCloseTray.AutoSize = $true; $ChkCloseTray.Checked = $true; $ChkCloseTray.Font = New-Object System.Drawing.Font("Segoe UI",10); $PageBehavior.Controls.Add($ChkCloseTray)
+$curY = $padY
+$BehTitle = New-Label -Parent $PageBehavior -LangKey "BehTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
+$curY += $BehTitle.Height + $gapSmall
+$BehSub = New-Label -Parent $PageBehavior -LangKey "BehSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
+$curY += $BehSub.Height + $gapLarge
+
+$LblSim = New-Label -Parent $PageBehavior -LangKey "MaxSim" -Location (New-Object System.Drawing.Point($padX,$curY))
+$NumSim = New-NumericUpDown -Parent $PageBehavior -Location (New-Object System.Drawing.Point([int]($padX + 300),[int]($curY-2))) -Min 1 -Max 20 -Value 3 -Tag "Input"
+$curY += $inputH
+$LblSimHelp = New-Label -Parent $PageBehavior -LangKey "MaxSimHelp" -Location (New-Object System.Drawing.Point($padX,$curY)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
+$curY += $LblSimHelp.Height + $gapMed
+
+$LblPau = New-Label -Parent $PageBehavior -LangKey "PauseSpeed" -Location (New-Object System.Drawing.Point($padX,$curY))
+$NumPause = New-NumericUpDown -Parent $PageBehavior -Location (New-Object System.Drawing.Point([int]($padX + 300),[int]($curY-2))) -Min 0 -Max 1000000 -Value 10240 -Tag "Input"
+$curY += $inputH
+$LblPauHelp = New-Label -Parent $PageBehavior -LangKey "PauseHelp" -Location (New-Object System.Drawing.Point($padX,$curY)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
+$curY += $LblPauHelp.Height + $gapMed
+
+$LblDl = New-Label -Parent $PageBehavior -LangKey "DefDlFolder" -Location (New-Object System.Drawing.Point($padX,$curY))
+$curY += $LblDl.Height + 5
+$TxtDl = New-TextBox -Parent $PageBehavior -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(600,$inputH)) -Tag "Input" -Text "C:\Downloads" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right)
+$BtnDl = New-Button -Parent $PageBehavior -LangKey "Browse" -Location (New-Object System.Drawing.Point(640,[int]($curY-1))) -Size (New-Object System.Drawing.Size(120,[int]($inputH+2))) -Tag "NavButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
+$BtnDl.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtDl.Text = $fbd.SelectedPath } })
+
+$curY += $inputH + $gapLarge
+
+$ChkMin = New-CheckBox -Parent $PageBehavior -LangKey "StartMin" -Location (New-Object System.Drawing.Point($padX,$curY))
+$curY += 30 + $gapSmall
+$ChkTray = New-CheckBox -Parent $PageBehavior -LangKey "MinToTray" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
+$curY += 30 + $gapSmall
+$ChkCloseTray = New-CheckBox -Parent $PageBehavior -LangKey "CloseToTray" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
 
 # --- Hardening Page ---
-$HardTitle = New-Object System.Windows.Forms.Label; $HardTitle.Text = $Lang.HardTitle; $HardTitle.Font = New-Object System.Drawing.Font("Segoe UI",16,[System.Drawing.FontStyle]::Bold); $HardTitle.Location = New-Object System.Drawing.Point(20,20); $HardTitle.AutoSize = $true; $PageHardening.Controls.Add($HardTitle)
-$HardSub = New-Object System.Windows.Forms.Label; $HardSub.Text = $Lang.HardSub; $HardSub.Font = New-Object System.Drawing.Font("Segoe UI",9); $HardSub.ForeColor = "LightGray"; $HardSub.Location = New-Object System.Drawing.Point(22,50); $HardSub.AutoSize = $true; $PageHardening.Controls.Add($HardSub)
-$ChkExe = New-Object System.Windows.Forms.CheckBox; $ChkExe.Text = $Lang.DarkExe; $ChkExe.Location = New-Object System.Drawing.Point(22,90); $ChkExe.AutoSize = $true; $ChkExe.Checked = $true; $ChkExe.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageHardening.Controls.Add($ChkExe)
-$ChkUpdate = New-Object System.Windows.Forms.CheckBox; $ChkUpdate.Text = $Lang.RunUpdate; $ChkUpdate.Location = New-Object System.Drawing.Point(22,130); $ChkUpdate.AutoSize = $true; $ChkUpdate.Checked = $true; $ChkUpdate.Font = New-Object System.Drawing.Font("Segoe UI",11); $PageHardening.Controls.Add($ChkUpdate)
-$HardNote = New-Object System.Windows.Forms.Label; $HardNote.Text = $Lang.HardNote; $HardNote.Font = New-Object System.Drawing.Font("Segoe UI",9); $HardNote.ForeColor = "LightGray"; $HardNote.Location = New-Object System.Drawing.Point(22,170); $HardNote.Size = New-Object System.Drawing.Size(780,60); $HardNote.AutoSize = $false; $PageHardening.Controls.Add($HardNote)
+$curY = $padY
+$HardTitle = New-Label -Parent $PageHardening -LangKey "HardTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
+$curY += $HardTitle.Height + $gapSmall
+$HardSub = New-Label -Parent $PageHardening -LangKey "HardSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
+$curY += $HardSub.Height + $gapLarge
+
+$ChkExe = New-CheckBox -Parent $PageHardening -LangKey "DarkExe" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
+$curY += 30 + $gapMed
+
+$ChkUpdate = New-CheckBox -Parent $PageHardening -LangKey "RunUpdate" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
+$curY += 30 + $gapLarge
+
+$HardNote = New-Label -Parent $PageHardening -LangKey "HardNote" -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(800,80)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
 
 # --- Repair Page ---
-$RepTitle = New-Object System.Windows.Forms.Label; $RepTitle.Text = $Lang.RepTitle; $RepTitle.Font = New-Object System.Drawing.Font("Segoe UI",16,[System.Drawing.FontStyle]::Bold); $RepTitle.Location = New-Object System.Drawing.Point(20,20); $RepTitle.AutoSize = $true; $PageRepair.Controls.Add($RepTitle)
-$RepSub = New-Object System.Windows.Forms.Label; $RepSub.Text = $Lang.RepSub; $RepSub.Font = New-Object System.Drawing.Font("Segoe UI",9); $RepSub.ForeColor = "LightGray"; $RepSub.Location = New-Object System.Drawing.Point(22,50); $RepSub.AutoSize = $true; $PageRepair.Controls.Add($RepSub)
+$curY = $padY
+$RepTitle = New-Label -Parent $PageRepair -LangKey "RepTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
+$curY += $RepTitle.Height + $gapSmall
+$RepSub = New-Label -Parent $PageRepair -LangKey "RepSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
+$curY += $RepSub.Height + $gapLarge
+
+# Repair Grid Logic
+[int]$gridX1 = $padX
+[int]$gridX2 = $padX + 280
+[int]$gridX3 = $padX + 560
+[int]$gridRow1 = $curY
+[int]$gridRow2 = $curY + 70 # Button Height + Gap
 
 function New-RepairBtn {
-    param($txt, $x, $y, $col, $act)
-    $b = New-Object System.Windows.Forms.Button
-    $b.Text = $txt; $b.Location = New-Object System.Drawing.Point($x, $y); $b.Size = New-Object System.Drawing.Size(230, 40)
-    $b.BackColor = $col; $b.ForeColor = "White"; $b.FlatStyle = "Flat"; $b.Add_Click($act)
-    $PageRepair.Controls.Add($b)
-    return $b
+    param($LangKey, $x, $y, $Tag, $act)
+    return New-Button -Parent $PageRepair -LangKey $LangKey -Location (New-Object System.Drawing.Point([int]$x, [int]$y)) -Size (New-Object System.Drawing.Size(260, 55)) -Tag $Tag -Click $act
 }
 
-New-RepairBtn $Lang.BtnResetCfg 22 90 ([System.Drawing.Color]::OrangeRed) { if ([System.Windows.Forms.MessageBox]::Show("Close JDownloader and delete the 'cfg' folder?","Confirm","YesNo") -eq "Yes") { Kill-JDownloader; Backup-JD -InstallPath $TxtPath.Text; Remove-Item "$($TxtPath.Text)\cfg" -Recurse -Force -ErrorAction SilentlyContinue } }
-New-RepairBtn $Lang.BtnResetThm 280 90 ([System.Drawing.Color]::FromArgb(64,64,64)) { if ([System.Windows.Forms.MessageBox]::Show("Reset theme and icons?","Confirm","YesNo") -eq "Yes") { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\cfg\laf" -Recurse -Force; Remove-Item "$($TxtPath.Text)\themes\standard\org\jdownloader\images\*" -Recurse -Force } }
-New-RepairBtn $Lang.BtnClearCache 538 90 ([System.Drawing.Color]::FromArgb(64,64,64)) { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\tmp\*" -Recurse -Force; Remove-Item "$($TxtPath.Text)\cfg\*.cache" -Force }
-New-RepairBtn $Lang.BtnAudit 22 150 ([System.Drawing.Color]::SeaGreen) { Run-Audit -InstallPath $TxtPath.Text }
-New-RepairBtn $Lang.BtnSafe 280 150 ([System.Drawing.Color]::SeaGreen) { Start-Process "$($TxtPath.Text)\JDownloader2.exe" -ArgumentList "-safe" }
-New-RepairBtn $Lang.BtnUninstall 538 150 ([System.Drawing.Color]::Maroon) { if ([System.Windows.Forms.MessageBox]::Show("Full Uninstall?","Confirm","YesNo") -eq "Yes") { Task-FullUninstall -InstallPath $TxtPath.Text } }
+New-RepairBtn "BtnResetCfg" $gridX1 $gridRow1 "DangerButton" { if ([System.Windows.Forms.MessageBox]::Show("Close JDownloader and delete the 'cfg' folder?","Confirm","YesNo") -eq "Yes") { Kill-JDownloader; Backup-JD -InstallPath $TxtPath.Text; Remove-Item "$($TxtPath.Text)\cfg" -Recurse -Force -ErrorAction SilentlyContinue } } | Out-Null
+New-RepairBtn "BtnResetThm" $gridX2 $gridRow1 "NavButton" { if ([System.Windows.Forms.MessageBox]::Show("Reset theme and icons?","Confirm","YesNo") -eq "Yes") { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\cfg\laf" -Recurse -Force; Remove-Item "$($TxtPath.Text)\themes\standard\org\jdownloader\images\*" -Recurse -Force } } | Out-Null
+New-RepairBtn "BtnClearCache" $gridX3 $gridRow1 "NavButton" { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\tmp\*" -Recurse -Force; Remove-Item "$($TxtPath.Text)\cfg\*.cache" -Force } | Out-Null
+
+New-RepairBtn "BtnAudit" $gridX1 $gridRow2 "SuccessButton" { Run-Audit -InstallPath $TxtPath.Text } | Out-Null
+New-RepairBtn "BtnSafe" $gridX2 $gridRow2 "SuccessButton" { Start-Process "$($TxtPath.Text)\JDownloader2.exe" -ArgumentList "-safe" } | Out-Null
+New-RepairBtn "BtnUninstall" $gridX3 $gridRow2 "DangerButton" { if ([System.Windows.Forms.MessageBox]::Show("Full Uninstall?","Confirm","YesNo") -eq "Yes") { Task-FullUninstall -InstallPath $TxtPath.Text } } | Out-Null
 
 # ==========================================
-# 9. CONFIRMATION DIALOG (Option B)
+# 9. CONFIRMATION DIALOG (Enhanced)
 # ==========================================
 
 function Show-ConfirmationDialog {
+    param($CurrentState)
     if ([string]::IsNullOrWhiteSpace($TxtPath.Text)) { 
         [System.Windows.Forms.MessageBox]::Show("Please select an installation path first.", "Error")
         return $false 
@@ -882,71 +1223,93 @@ function Show-ConfirmationDialog {
 
     $cForm = New-Object System.Windows.Forms.Form
     $cForm.Text = "Confirm Operations"
-    $cForm.Size = New-Object System.Drawing.Size(500, 600)
+    $cForm.Size = New-Object System.Drawing.Size(600, 750)
     $cForm.StartPosition = "CenterParent"
     $cForm.BackColor = [System.Drawing.Color]::FromArgb(30,30,30)
     $cForm.ForeColor = "White"
-    $cForm.FormBorderStyle = "FixedDialog"
-    $cForm.MaximizeBox = $false
+    $cForm.FormBorderStyle = "Sizable"
+    $cForm.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+    $cForm.AutoScaleMode = "Dpi"
 
     $lbl = New-Object System.Windows.Forms.Label
     $lbl.Text = "Verify and select options to apply:"
-    $lbl.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-    $lbl.Location = New-Object System.Drawing.Point(10,10); $lbl.AutoSize = $true
-    $cForm.Controls.Add($lbl)
+    $lbl.Font = New-Object System.Drawing.Font("Segoe UI", 20, [System.Drawing.FontStyle]::Bold)
+    $lbl.Location = New-Object System.Drawing.Point(20,20); $lbl.AutoSize = $true
+    [void]$cForm.Controls.Add($lbl)
 
     $flow = New-Object System.Windows.Forms.FlowLayoutPanel
-    $flow.Location = New-Object System.Drawing.Point(10, 40)
-    $flow.Size = New-Object System.Drawing.Size(460, 450)
+    $flow.Location = New-Object System.Drawing.Point(20, 70)
+    $flow.Size = New-Object System.Drawing.Size(540, 560)
     $flow.FlowDirection = "TopDown"
     $flow.WrapContents = $false
     $flow.AutoScroll = $true
-    $cForm.Controls.Add($flow)
-
-    function Add-Check {
-        param($refCtrl, $txt)
-        $cb = New-Object System.Windows.Forms.CheckBox
-        $cb.Text = $txt
-        $cb.AutoSize = $true
-        $cb.Checked = $refCtrl.Checked
-        $cb.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-        $cb.ForeColor = "Gainsboro"
-        $flow.Controls.Add($cb)
-        return $cb
-    }
+    # Padding for scrollbar
+    $flow.Padding = New-Object System.Windows.Forms.Padding(0,0,20,0)
+    $flow.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+    [void]$cForm.Controls.Add($flow)
 
     function Add-Info {
         param($txt, $val)
         $l = New-Object System.Windows.Forms.Label
         $l.Text = "$txt $val"
         $l.AutoSize = $true
+        # Constrain width for wrapping
+        $l.MaximumSize = New-Object System.Drawing.Size(500, 0) 
         $l.ForeColor = "Gray"
-        $l.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-        $flow.Controls.Add($l)
+        $l.Font = New-Object System.Drawing.Font("Segoe UI", 14)
+        [void]$flow.Controls.Add($l)
     }
 
-    # Add items mapped to actual GUI controls
-    Add-Info "Theme Preset:" $CboTheme.Text
-    Add-Info "Mode:" $CboMode.Text
-    
-    $chk_WinDec = Add-Check $ChkWinDec "Enable custom window decorations"
-    $chk_MinLay = Add-Check $ChkMinLay "Use compact/minimal tabs"
-    $chk_StartMin = Add-Check $ChkMin "Start Minimized"
-    $chk_Tray = Add-Check $ChkTray "Minimize to Tray"
-    $chk_Close = Add-Check $ChkCloseTray "Close to Tray"
-    $chk_Exe = Add-Check $ChkExe "Patch .exe icon to dark mode"
-    $chk_Upd = Add-Check $ChkUpdate "Run Update after completion"
+    Add-Info "Theme Preset:" $CurrentState.ThemeName
+    Add-Info "Mode:" $CurrentState.Mode
+    Add-Info "Downloads:" $CurrentState.MaxSim
+    Add-Info "Path:" $CurrentState.InstallPath
+
+    # Auto-generate Confirmation Checkboxes
+    $KeyMap = @{
+        "WindowDec"="Enable custom window decorations";
+        "ForceMinimal"="Use compact/minimal tabs";
+        "StartMin"="Start Minimized";
+        "MinToTray"="Minimize to Tray";
+        "CloseToTray"="Close to Tray";
+        "PatchExe"="Patch .exe icon to dark mode";
+        "AutoUpdate"="Run Update after completion"
+    }
+
+    $ResultRefs = @{}
+
+    foreach ($key in $KeyMap.Keys) {
+        if ($CurrentState.ContainsKey($key)) {
+            $cb = New-Object System.Windows.Forms.CheckBox
+            $cb.Text = $KeyMap[$key]
+            $cb.AutoSize = $true
+            # Constrain width for wrapping
+            $cb.MaximumSize = New-Object System.Drawing.Size(500, 0)
+            $cb.Checked = $CurrentState[$key]
+            $cb.Font = New-Object System.Drawing.Font("Segoe UI", 14)
+            $cb.ForeColor = "Gainsboro"
+            $cb.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 10) # Added Padding
+            [void]$flow.Controls.Add($cb)
+            $ResultRefs[$key] = $cb
+        }
+    }
 
     # Buttons
+    $btnPanel = New-Object System.Windows.Forms.Panel
+    $btnPanel.Height = 70
+    $btnPanel.Dock = "Bottom"
+    [void]$cForm.Controls.Add($btnPanel)
+
     $btnOk = New-Object System.Windows.Forms.Button
     $btnOk.Text = "RUN OPERATIONS"
     $btnOk.DialogResult = "OK"
     $btnOk.BackColor = [System.Drawing.Color]::FromArgb(30,144,255)
     $btnOk.ForeColor = "White"
     $btnOk.FlatStyle = "Flat"
-    $btnOk.Size = New-Object System.Drawing.Size(150, 35)
-    $btnOk.Location = New-Object System.Drawing.Point(20, 510)
-    $cForm.Controls.Add($btnOk)
+    $btnOk.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $btnOk.Size = New-Object System.Drawing.Size(220, 50)
+    $btnOk.Location = New-Object System.Drawing.Point(20, 10)
+    [void]$btnPanel.Controls.Add($btnOk)
 
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = "Cancel"
@@ -954,21 +1317,27 @@ function Show-ConfirmationDialog {
     $btnCancel.BackColor = [System.Drawing.Color]::FromArgb(60,60,60)
     $btnCancel.ForeColor = "White"
     $btnCancel.FlatStyle = "Flat"
-    $btnCancel.Size = New-Object System.Drawing.Size(100, 35)
-    $btnCancel.Location = New-Object System.Drawing.Point(180, 510)
-    $cForm.Controls.Add($btnCancel)
+    $btnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 14)
+    $btnCancel.Size = New-Object System.Drawing.Size(140, 50)
+    $btnCancel.Location = New-Object System.Drawing.Point(260, 10)
+    [void]$btnPanel.Controls.Add($btnCancel)
 
     $result = $cForm.ShowDialog()
     
     if ($result -eq "OK") {
-        # Apply changes back to real GUI (Option B)
-        $ChkWinDec.Checked = $chk_WinDec.Checked
-        $ChkMinLay.Checked = $chk_MinLay.Checked
-        $ChkMin.Checked = $chk_StartMin.Checked
-        $ChkTray.Checked = $chk_Tray.Checked
-        $ChkCloseTray.Checked = $chk_Close.Checked
-        $ChkExe.Checked = $chk_Exe.Checked
-        $ChkUpdate.Checked = $chk_Upd.Checked
+        foreach ($k in $ResultRefs.Keys) {
+             $CurrentState[$k] = $ResultRefs[$k].Checked
+        }
+        
+        # Sync changes back to main GUI
+        if($ResultRefs["WindowDec"]) { $ChkWinDec.Checked = $ResultRefs["WindowDec"].Checked }
+        if($ResultRefs["ForceMinimal"]) { $ChkMinLay.Checked = $ResultRefs["ForceMinimal"].Checked }
+        if($ResultRefs["StartMin"]) { $ChkMin.Checked = $ResultRefs["StartMin"].Checked }
+        if($ResultRefs["MinToTray"]) { $ChkTray.Checked = $ResultRefs["MinToTray"].Checked }
+        if($ResultRefs["CloseToTray"]) { $ChkCloseTray.Checked = $ResultRefs["CloseToTray"].Checked }
+        if($ResultRefs["PatchExe"]) { $ChkExe.Checked = $ResultRefs["PatchExe"].Checked }
+        if($ResultRefs["AutoUpdate"]) { $ChkUpdate.Checked = $ResultRefs["AutoUpdate"].Checked }
+        
         return $true
     }
     return $false
@@ -981,40 +1350,47 @@ function Show-ConfirmationDialog {
 $pages = @{ $BtnDashboard=$PageDashboard; $BtnInstallation=$PageInstallation; $BtnTheme=$PageTheme; $BtnBehavior=$PageBehavior; $BtnHardening=$PageHardening; $BtnRepair=$PageRepair }
 foreach ($entry in $pages.GetEnumerator()) {
     $entry.Key.Add_Click({ 
+        # Visual Reset for Sidebar logic
+        foreach ($k in $pages.Keys) {
+            # Reset color based on Theme palette manually or let Theme Engine handle it next time.
+            # Simple approach: Reset to Sidebar background (approximate)
+            $k.BackColor = $Sidebar.BackColor
+        }
+        # Highlight Active
+        $this.BackColor = [System.Windows.Forms.ControlPaint]::Light($this.BackColor, 0.5)
+
         foreach ($p in $pages.Values) { $p.Visible = $false }
-        $this.Tag = "SidebarBtn"
+        # Do NOT overwrite Tag
         $pages[$this].Visible = $true 
         
-        # Instant preview refresh when hitting Theme page
-        if ($pages[$this] -eq $PageTheme) { Update-ThemePreview }
+        if ($pages[$this] -eq $PageTheme) { 
+             Resize-ThemePreview
+             Update-ThemePreview 
+        }
     })
 }
 $PageDashboard.Visible = $true
 
 $Form.Add_Load({
-    Preload-ThemeImages
-    $CboTheme.SelectedIndex = 0
+    Start-ThemeImagePreload -Definitions $ThemeDefinitions
 
-    # Initial layout for preview panel
+    $CboTheme.SelectedIndex = 0
     Resize-ThemePreview
     
-    # OS Theme Detection
     $sysTheme = Detect-SystemTheme
     $CboGuiTheme.SelectedItem = $sysTheme
     Apply-GuiTheme -ThemeName $sysTheme
     
-    # Path Detection & Mode Logic
     $detected = Detect-JDPath
     if ($detected) { 
         $TxtPath.Text = $detected
-        $CboMode.SelectedIndex = 0 # Modify Existing
+        $CboMode.SelectedIndex = 0
         Log-Status "Found JDownloader at: $detected"
     } else { 
-        $CboMode.SelectedIndex = 1 # Clean Install GitHub
+        $CboMode.SelectedIndex = 1
         Log-Status "JDownloader not found. defaulted to Clean Install."
     }
 
-    # Load Settings
     $saved = Load-Settings
     if ($saved) {
         if ($saved.PSObject.Properties.Name -contains 'InstallPath') { $TxtPath.Text = $saved.InstallPath }
@@ -1027,14 +1403,47 @@ $Form.Add_Resize({
     Resize-ThemePreview
 })
 
+# Dispose all resources on close
+$Form.Add_FormClosing({
+    Cleanup-Resources
+})
+
 $BtnExec.Add_Click({
-    if (Show-ConfirmationDialog) {
+    # Explicit mapping logic
+    $mode = "Modify"
+    $src = $null
+
+    if ($CboMode.SelectedIndex -eq 0) {
+        $mode = "Modify"
+    } elseif ($CboMode.SelectedIndex -eq 1) {
+        $mode = "Install"
+        $src = "GitHub"
+    } elseif ($CboMode.SelectedIndex -eq 2) {
+        $mode = "Install"
+        $src = "Mega"
+    }
+    
+    $State = @{ 
+        Mode=$mode; 
+        InstallSource=$src; 
+        InstallPath=$TxtPath.Text; 
+        ThemeName=$CboTheme.Text; 
+        GuiThemeName=$CboGuiTheme.Text; 
+        IconPack=$CboIcons.Text; 
+        WindowDec=$ChkWinDec.Checked; 
+        MaxSim=$NumSim.Value; 
+        DlFolder=$TxtDl.Text; 
+        StartMin=$ChkMin.Checked; 
+        MinToTray=$ChkTray.Checked; 
+        CloseToTray=$ChkCloseTray.Checked; 
+        PatchExe=$ChkExe.Checked; 
+        AutoUpdate=$ChkUpdate.Checked; 
+        ForceMinimal=$ChkMinLay.Checked; 
+        PauseSpeed=$NumPause.Value 
+    }
+
+    if (Show-ConfirmationDialog -CurrentState $State) {
         $BtnExec.Enabled = $false; $BtnExec.Text = "Processing..."
-        $mode = if($CboMode.SelectedIndex -eq 0){"Modify"}else{"Install"}
-        $src = if($CboMode.SelectedIndex -eq 2){"Mega"}else{"GitHub"}
-        
-        $State = @{ Mode=$mode; InstallSource=$src; InstallPath=$TxtPath.Text; ThemeName=$CboTheme.Text; GuiThemeName=$CboGuiTheme.Text; IconPack=$CboIcons.Text; WindowDec=$ChkWinDec.Checked; MaxSim=$NumSim.Value; DlFolder=$TxtDl.Text; StartMin=$ChkMin.Checked; MinToTray=$ChkTray.Checked; CloseToTray=$ChkCloseTray.Checked; PatchExe=$ChkExe.Checked; AutoUpdate=$ChkUpdate.Checked; ForceMinimal=$ChkMinLay.Checked; PauseSpeed=$NumPause.Value }
-        
         $Form.Refresh()
         Execute-Operations -GUI_State $State
         $BtnExec.Text = $Lang.Execute; $BtnExec.Enabled = $true
