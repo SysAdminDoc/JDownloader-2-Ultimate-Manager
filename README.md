@@ -8,9 +8,6 @@ The tool supports both new deployments and existing installations, providing com
 
 ---
 
-
-![Screenshot](screenshot.png)
-
 ## Quick Start
 
 Run this command in **PowerShell (Admin)** to launch instantly:
