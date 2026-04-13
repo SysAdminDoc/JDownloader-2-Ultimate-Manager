@@ -1,5 +1,7 @@
 # JDownloader 2 Ultimate Manager  
 
+![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-PowerShell-lightgrey)
+
 <img width="1637" height="1216" alt="Preview" src="https://github.com/user-attachments/assets/0953927a-209c-476d-aa87-a17f2ab68f19" />
 
 JDownloader 2 Ultimate Manager is a comprehensive management utility that automates installation, configuration, theming, hardening, and repair of JDownloader 2. It replaces manual JSON editing and scattered configuration tasks with a unified, high-quality graphical interface designed for reliability and full control.
