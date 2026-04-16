@@ -1327,7 +1327,7 @@ if (Test-Path $brandPngPath) {
 [void](New-Label -Parent $SidebarBrand -Text "Workspace manager" -Location (New-Object System.Drawing.Point(78, 26)) -Font (New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(118, 16)) -AutoSize $false -Tag "BodyMuted")
 [void](New-Label -Parent $SidebarBrand -Text "JDownloader 2" -Location (New-Object System.Drawing.Point(24, 74)) -Font (New-Object System.Drawing.Font("Segoe UI", 13.5, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(172, 24)) -AutoSize $false)
 [void](New-Label -Parent $SidebarBrand -Text "Ultimate Manager" -Location (New-Object System.Drawing.Point(24, 98)) -Font (New-Object System.Drawing.Font("Segoe UI", 10.5, [System.Drawing.FontStyle]::Regular)) -Size (New-Object System.Drawing.Size(172, 20)) -AutoSize $false -Tag "MutedStrong")
-[void](New-Label -Parent $SidebarBrand -Text "Install, refine, harden, and repair in one calm workspace." -Location (New-Object System.Drawing.Point(24, 120)) -Size (New-Object System.Drawing.Size(172, 26)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $SidebarBrand -Text "Install, refine, harden, and repair in one calm workspace." -Location (New-Object System.Drawing.Point(24, 120)) -Size (New-Object System.Drawing.Size(172, 38)) -AutoSize $false -Tag "BodyMuted")
 
 $SidebarFooter = New-Panel -Parent $Sidebar -Dock "Bottom" -Size (New-Object System.Drawing.Size(252, 164)) -Tag "Sidebar"
 $SidebarNote = New-Surface -Parent $SidebarFooter -Location (New-Object System.Drawing.Point(16, 10)) -Size (New-Object System.Drawing.Size(220, 140)) -Tag "SidebarAlt"
@@ -1378,7 +1378,7 @@ $StatusLabel = New-Label -Parent $Footer -Text "Status: Ready" -Location (New-Ob
 $StatusLabel.AutoEllipsis = $true
 $StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 
-$PageDashboard    = New-PagePanel -CanvasHeight 666; [void]$MainPanel.Controls.Add($PageDashboard)
+$PageDashboard    = New-PagePanel -CanvasHeight 682; [void]$MainPanel.Controls.Add($PageDashboard)
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
@@ -1425,24 +1425,24 @@ $DashCardSafetyTitle = New-Label -Parent $DashCardSafety -Text "Keep recovery cl
 $DashCardSafetyBody = New-Label -Parent $DashCardSafety -Text "Reset, audit, safe mode, and uninstall tools are ready if this install needs a fast rollback or repair." -Location (New-Object System.Drawing.Point(24, 54)) -Size (New-Object System.Drawing.Size(284, 40)) -AutoSize $false -Tag "BodyMuted"
 $BtnDashRepairJump = New-Button -Parent $DashCardSafety -Text "Repair tools" -Location (New-Object System.Drawing.Point(24, 106)) -Size (New-Object System.Drawing.Size(132, 34)) -Tag "SecondaryButton" -Click { Show-Page -Button $BtnRepair }
 
-$DashPrefs = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(0, 414)) -Size (New-Object System.Drawing.Size(1040, 224))
+$DashPrefs = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(0, 414)) -Size (New-Object System.Drawing.Size(1040, 238))
 $DashPrefsHeading = New-Label -Parent $DashPrefs -Text "Workspace preferences" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold))
 $DashPrefsIntro = New-Label -Parent $DashPrefs -Text "Set the app chrome once, then the tool remembers the workspace on the next launch." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(620, 24)) -AutoSize $false -Tag "BodyMuted"
 $LblGuiTheme = New-Label -Parent $DashPrefs -LangKey "GuiTheme" -Location (New-Object System.Drawing.Point(24, 96))
 $CboGuiTheme = New-ComboBox -Parent $DashPrefs -Location (New-Object System.Drawing.Point(24, 124)) -Size (New-Object System.Drawing.Size(290, 36)) -Tag "Input" -Items $GuiThemes.Keys
 $LblLang = New-Label -Parent $DashPrefs -LangKey "Language" -Location (New-Object System.Drawing.Point(348, 96))
 $CboLang = New-ComboBox -Parent $DashPrefs -Location (New-Object System.Drawing.Point(348, 124)) -Size (New-Object System.Drawing.Size(290, 36)) -Tag "Input" -Items $AvailableLanguages.Keys
-$DashPrefsNote = New-Surface -Parent $DashPrefs -Location (New-Object System.Drawing.Point(668, 80)) -Size (New-Object System.Drawing.Size(348, 128)) -Tag "Callout"
+$DashPrefsNote = New-Surface -Parent $DashPrefs -Location (New-Object System.Drawing.Point(668, 80)) -Size (New-Object System.Drawing.Size(348, 144)) -Tag "Callout"
 $DashPrefsNoteHeading = New-Label -Parent $DashPrefsNote -Text "Workspace status" -Location (New-Object System.Drawing.Point(18, 16)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold))
 $DashPrefsStateValue = New-Label -Parent $DashPrefsNote -Text "No saved workspace yet" -Location (New-Object System.Drawing.Point(18, 40)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(310, 24)) -AutoSize $false
-$DashPrefsStateDetail = New-Label -Parent $DashPrefsNote -Text "Your selected path, theme, language, and run options will be remembered after the first successful run." -Location (New-Object System.Drawing.Point(18, 66)) -Size (New-Object System.Drawing.Size(310, 30)) -AutoSize $false -Tag "BodyMuted"
-$BtnRestoreWorkspace = New-Button -Parent $DashPrefsNote -Text "Restore last run" -Location (New-Object System.Drawing.Point(18, 96)) -Size (New-Object System.Drawing.Size(160, 28)) -Tag "SecondaryButton"
+$DashPrefsStateDetail = New-Label -Parent $DashPrefsNote -Text "Your selected path, theme, language, and run options will be remembered after the first successful run." -Location (New-Object System.Drawing.Point(18, 66)) -Size (New-Object System.Drawing.Size(310, 44)) -AutoSize $false -Tag "BodyMuted"
+$BtnRestoreWorkspace = New-Button -Parent $DashPrefsNote -Text "Restore last run" -Location (New-Object System.Drawing.Point(18, 112)) -Size (New-Object System.Drawing.Size(170, 28)) -Tag "SecondaryButton"
 
 function Layout-Dashboard {
     if (-not $PageDashboard -or -not $DashboardCanvas -or -not $DashHero -or -not $DashOverview -or -not $DashPrefs) { return }
 
-    $DashboardCanvas.Size = New-Object System.Drawing.Size(1040, 666)
-    $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(1064, 702)
+    $DashboardCanvas.Size = New-Object System.Drawing.Size(1040, 682)
+    $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(1064, 718)
 
     $DashHero.Size = New-Object System.Drawing.Size(1040, 216)
     $DashTitle.Size = New-Object System.Drawing.Size(590, 52)
@@ -1474,7 +1474,7 @@ function Layout-Dashboard {
     $DashCardSafetyBody.Size = New-Object System.Drawing.Size(284, 40)
 
     $DashPrefs.Location = New-Object System.Drawing.Point(0, 414)
-    $DashPrefs.Size = New-Object System.Drawing.Size(1040, 224)
+    $DashPrefs.Size = New-Object System.Drawing.Size(1040, 238)
     $DashPrefsIntro.Size = New-Object System.Drawing.Size(620, 24)
     $LblGuiTheme.Location = New-Object System.Drawing.Point(24, 96)
     $CboGuiTheme.Location = New-Object System.Drawing.Point(24, 124)
@@ -1483,9 +1483,10 @@ function Layout-Dashboard {
     $CboLang.Location = New-Object System.Drawing.Point(348, 124)
     $CboLang.Size = New-Object System.Drawing.Size(290, 36)
     $DashPrefsNote.Location = New-Object System.Drawing.Point(668, 80)
-    $DashPrefsNote.Size = New-Object System.Drawing.Size(348, 128)
+    $DashPrefsNote.Size = New-Object System.Drawing.Size(348, 144)
     $DashPrefsStateValue.Size = New-Object System.Drawing.Size(310, 24)
-    $DashPrefsStateDetail.Size = New-Object System.Drawing.Size(310, 30)
+    $DashPrefsStateDetail.Size = New-Object System.Drawing.Size(310, 44)
+    $BtnRestoreWorkspace.Location = New-Object System.Drawing.Point(18, 112)
     $BtnRestoreWorkspace.Size = New-Object System.Drawing.Size(170, 28)
 }
 
@@ -1495,7 +1496,7 @@ $InstTitle = New-Label -Parent $InstallHero -LangKey "InstTitle" -Location (New-
 $InstSub = New-Label -Parent $InstallHero -LangKey "InstSub" -Location (New-Object System.Drawing.Point(24, 62)) -Size (New-Object System.Drawing.Size(690, 44)) -AutoSize $false -Tag "SubHeader"
 [void](New-Label -Parent $InstallHero -Text "Readiness" -Location (New-Object System.Drawing.Point(808, 24)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
 $InstallBadge = New-Badge -Parent $InstallHero -Text "Detection pending" -Location (New-Object System.Drawing.Point(808, 48)) -Size (New-Object System.Drawing.Size(168, 30)) -Tag "BadgeAccent"
-[void](New-Label -Parent $InstallHero -Text "The tool can work against an existing install or prepare a fresh one for you." -Location (New-Object System.Drawing.Point(804, 68)) -Size (New-Object System.Drawing.Size(190, 38)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $InstallHero -Text "The tool can work against an existing install or prepare a fresh one for you." -Location (New-Object System.Drawing.Point(804, 68)) -Size (New-Object System.Drawing.Size(190, 50)) -AutoSize $false -Tag "BodyMuted")
 
 $PathSurface = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(0, 184)) -Size (New-Object System.Drawing.Size(640, 246))
 [void](New-Label -Parent $PathSurface -Text "Where JDownloader lives" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
