@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.5.0)
+    JDownloader 2 ULTIMATE MANAGER (v13.5.1)
     - Premium workspace UI with surface-based layout, hero sections, and card tiles.
     - Enhanced 18-token theme palette with semantic colors across all four themes.
     - Workspace state tracking with change detection and restore capability.
@@ -170,13 +170,16 @@ $CurrentLangCode = "en"
 
 function Load-Language {
     $langUrl = "https://raw.githubusercontent.com/SysAdminDoc/JDownloader-2-Ultimate-Manager/refs/heads/main/Translations/lang.json"
-    $userLang = (Get-Culture).TwoLetterISOLanguageName 
-    
+    $userLang = (Get-Culture).TwoLetterISOLanguageName
+
     try {
-        Invoke-WebRequest -Uri $langUrl -OutFile $LangFile -UseBasicParsing -ErrorAction SilentlyContinue
-        if (Test-Path $LangFile) {
-            $json = Get-Content $LangFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            
+        $tempLangFile = "$LangFile.download"
+        Invoke-WebRequest -Uri $langUrl -OutFile $tempLangFile -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        if ((Test-Path $tempLangFile) -and (Get-Item $tempLangFile).Length -gt 100) {
+            $raw = Get-Content $tempLangFile -Raw -Encoding UTF8
+            $json = $raw | ConvertFrom-Json
+            Move-Item $tempLangFile $LangFile -Force -ErrorAction SilentlyContinue
+
             # Store all available languages for dropdown
             $json.PSObject.Properties | ForEach-Object {
                 $AvailableLanguages[$_.Name] = $_.Value
@@ -184,18 +187,41 @@ function Load-Language {
 
             # Auto-detect logic
             if ($AvailableLanguages.ContainsKey($userLang)) {
-                $CurrentLangCode = $userLang
+                $script:CurrentLangCode = $userLang
                 Apply-LanguageData $userLang
             } elseif ($AvailableLanguages.ContainsKey("en")) {
-                $CurrentLangCode = "en"
+                $script:CurrentLangCode = "en"
                 Apply-LanguageData "en"
             }
         } else {
+            Remove-Item $tempLangFile -Force -ErrorAction SilentlyContinue
             $AvailableLanguages["en"] = $DefaultLang
         }
     } catch {
-        $AvailableLanguages["en"] = $DefaultLang
+        Remove-Item "$LangFile.download" -Force -ErrorAction SilentlyContinue
+        # Fall back to cached copy if available
+        if (Test-Path $LangFile) {
+            try {
+                $json = Get-Content $LangFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                $json.PSObject.Properties | ForEach-Object { $AvailableLanguages[$_.Name] = $_.Value }
+                if ($AvailableLanguages.ContainsKey($userLang)) {
+                    $script:CurrentLangCode = $userLang
+                    Apply-LanguageData $userLang
+                }
+            } catch { $AvailableLanguages["en"] = $DefaultLang }
+        } else {
+            $AvailableLanguages["en"] = $DefaultLang
+        }
     }
+}
+
+$script:LangKeyAliases = @{
+    "RepairTools" = "Repair"; "ExecuteOperations" = "Execute"; "Detect" = "AutoDetect"
+    "InstallPath" = "InstPath"; "InstallMode" = "InstMode"; "ThemeSelection" = "ThemePreset"
+    "WindowDecorations" = "EnableWinDec"; "MinimalLayout" = "CompactTabs"
+    "MaxSimDownloads" = "MaxSim"; "DownloadFolder" = "DefDlFolder"
+    "StartMinimized" = "StartMin"; "MinimizeToTray" = "MinToTray"
+    "PatchExeIcon" = "DarkExe"; "AutoUpdate" = "RunUpdate"
 }
 
 function Apply-LanguageData {
@@ -204,6 +230,10 @@ function Apply-LanguageData {
         $dict = $AvailableLanguages[$Code]
         foreach ($key in $dict.PSObject.Properties.Name) {
             $Lang[$key] = $dict.$key
+            # Bridge mismatched keys so translations reach registered controls
+            if ($script:LangKeyAliases.ContainsKey($key)) {
+                $Lang[$script:LangKeyAliases[$key]] = $dict.$key
+            }
         }
     }
 }
@@ -386,7 +416,11 @@ function Save-Settings {
 
 function Get-SettingsSourcePath {
     if (Test-Path $SettingsFile) { return $SettingsFile }
-    if (Test-Path $LegacySettingsFile) { return $LegacySettingsFile }
+    if (Test-Path $LegacySettingsFile) {
+        # Migrate legacy settings to new location
+        try { Copy-Item $LegacySettingsFile $SettingsFile -Force -ErrorAction Stop } catch { Log-Status "Failed to migrate legacy settings: $_" "WARN" }
+        return $SettingsFile
+    }
     return $SettingsFile
 }
 
@@ -456,13 +490,13 @@ function Download-File {
     while ($attempt -lt $maxRetries -and -not $success) {
         $attempt++
         try {
-            if (-not (Get-Module -Name BitsTransfer -ListAvailable)) { Import-Module BitsTransfer -ErrorAction Stop }
+            if (-not (Get-Module -Name BitsTransfer)) { Import-Module BitsTransfer -ErrorAction Stop }
             Start-BitsTransfer -Source $Url -Destination $Destination -ErrorAction Stop -Priority Foreground
             $success = $true
         } catch {
             Log-Status "BITS attempt $attempt failed: $_" "WARN"
             try {
-                Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -ErrorAction Stop
+                Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
                 $success = $true
             } catch {
                 Log-Status "WebClient attempt $attempt failed from $Url. $_" "WARN"
@@ -493,6 +527,7 @@ function Get-7Zip {
     if (-not (Test-Path $seven)) {
         if (-not (Download-File -Url "https://www.7-zip.org/a/7zr.exe" -Destination $seven)) {
             Log-Status "Unable to download 7zr.exe." "ERROR"
+            return $null
         }
     }
     return $seven
@@ -510,15 +545,17 @@ function Start-ThemeImagePreload {
         param($defs)
         $results = @{}
         $web = New-Object System.Net.WebClient
-        foreach ($key in $defs.Keys) {
-            $url = $defs[$key].PreviewUrl
-            if ($url) {
-                try {
-                    $bytes = $web.DownloadData($url)
-                    $results[$key] = $bytes
-                } catch { $results[$key] = $null }
+        try {
+            foreach ($key in $defs.Keys) {
+                $url = $defs[$key].PreviewUrl
+                if ($url) {
+                    try {
+                        $bytes = $web.DownloadData($url)
+                        $results[$key] = $bytes
+                    } catch { $results[$key] = $null }
+                }
             }
-        }
+        } finally { $web.Dispose() }
         return $results
     }
 
@@ -821,6 +858,7 @@ function Task-ExtractIcons {
     $extractPath = "$WorkDir\IconsTemp"
     if (-not (Download-File -Url $ZipUrl -Destination $localZip)) { return }
     $seven = Get-7Zip
+    if (-not $seven) { Log-Status "Cannot extract icons without 7zr.exe." "ERROR"; return }
     if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue }
     Start-Process $seven -ArgumentList "x `"$localZip`" -o`"$extractPath`" -y" -Wait -WindowStyle Hidden
     $foundImages = Get-ChildItem -Path $extractPath -Recurse -Directory | Where-Object { $_.Name -eq "images" } | Select-Object -First 1
@@ -838,7 +876,7 @@ function Task-PatchLaf {
         if (-not $content.PSObject.Properties["iconsetid"]) { $content | Add-Member -MemberType NoteProperty -Name "iconsetid" -Value $IconSetId } else { $content.iconsetid = $IconSetId }
         if (-not $content.PSObject.Properties["windowdecorationenabled"]) { $content | Add-Member -MemberType NoteProperty -Name "windowdecorationenabled" -Value $WindowDecorations } else { $content.windowdecorationenabled = $WindowDecorations }
         $content | ConvertTo-Json -Depth 100 | Set-Content $JsonPath -Encoding UTF8
-    } catch {}
+    } catch { Log-Status "Failed to patch LAF config: $_" "WARN" }
 }
 
 function Task-NukeBanners {
@@ -847,11 +885,17 @@ function Task-NukeBanners {
     $themeDir = "$InstallPath\themes"
     if (Test-Path $themeDir) {
         Get-ChildItem -Path $themeDir -Recurse -Filter "*.png" | Where-Object { $_.Directory.Name -eq "banner" } | ForEach-Object {
+            $img = $null; $bmp = $null
             try {
-                $img = [System.Drawing.Image]::FromFile($_.FullName); $w = $img.Width; $h = $img.Height; $img.Dispose()
+                $img = [System.Drawing.Image]::FromFile($_.FullName)
+                $w = $img.Width; $h = $img.Height
+                $img.Dispose(); $img = $null
                 $bmp = New-Object System.Drawing.Bitmap($w, $h)
-                $bmp.Save($_.FullName, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
-            } catch {}
+                $bmp.Save($_.FullName, [System.Drawing.Imaging.ImageFormat]::Png)
+            } catch { Log-Status "Failed to replace banner image $($_.Name): $_" "WARN" } finally {
+                if ($img) { $img.Dispose() }
+                if ($bmp) { $bmp.Dispose() }
+            }
         }
     }
 }
@@ -876,13 +920,14 @@ function Task-PatchExeIcon {
                 } catch { Log-Status "Failed to patch $exe - Access Denied?" "WARN" }
             }
         }
-        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep 1; Start-Process explorer.exe
+        # Refresh icon cache without killing explorer
+        try { Start-Process "ie4uinit.exe" -ArgumentList "-show" -WindowStyle Hidden -ErrorAction SilentlyContinue } catch {}
     }
 }
 
 function Set-JsonConfig {
     param($Path, $DataHash)
-    try { $DataHash | ConvertTo-Json -Depth 100 | Set-Content $Path -Encoding UTF8 } catch {}
+    try { $DataHash | ConvertTo-Json -Depth 100 | Set-Content $Path -Encoding UTF8 } catch { Log-Status "Failed to write config $Path : $_" "WARN" }
 }
 
 function Task-DeepHardening {
@@ -897,6 +942,7 @@ function Task-Install {
     param($Source)
     if ($Source -eq "GitHub") {
         $seven = Get-7Zip
+        if (-not $seven) { Log-Status "Cannot extract installer without 7zr.exe." "ERROR"; return $false }
         $baseUrl = "https://github.com/SysAdminDoc/JDownloaderDarkMode/raw/main/Installer/installer.7z"
         for ($i = 1; $i -le 7; $i++) {
             $part = ".{0:D3}" -f $i
@@ -1007,7 +1053,7 @@ function Execute-Operations {
                 $guiObj = $Template_GUI | ConvertFrom-Json
                 $guiObj.lookandfeeltheme = $Theme.LafID
                 $guiObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json" -Encoding UTF8
-            } catch {}
+            } catch { Log-Status "Failed to write GUI settings: $_" "WARN" }
         }
 
         try {
@@ -1016,19 +1062,19 @@ function Execute-Operations {
             if ([string]::IsNullOrWhiteSpace($GUI_State.DlFolder)) {
                 $null = $genObj.PSObject.Properties.Remove("defaultdownloadfolder")
             } else {
-                $genObj.defaultdownloadfolder = $GUI_State.DlFolder.Replace("\", "\\")
+                $genObj.defaultdownloadfolder = $GUI_State.DlFolder
             }
             $genObj.pausespeed = [int]$GUI_State.PauseSpeed
             $genObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GeneralSettings.json" -Encoding UTF8
-        } catch {}
+        } catch { Log-Status "Failed to write general settings: $_" "WARN" }
 
         try {
             $trayObj = $Template_Tray | ConvertFrom-Json
             $trayObj.startminimizedenabled = $GUI_State.StartMin
             $trayObj.onminimizeaction = if ($GUI_State.MinToTray) { "TO_TASKBAR_IF_ALLOWED" } else { "TO_TASKBAR" }
-            if ($GUI_State.ContainsKey("CloseToTray")) { $trayObj.oncloseaction = if ($GUI_State.CloseToTray) { "TO_TASKBAR" } else { "ASK" } }
+            if ($GUI_State.Contains("CloseToTray")) { $trayObj.oncloseaction = if ($GUI_State.CloseToTray) { "TO_TASKBAR" } else { "ASK" } }
             $trayObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.gui.jdtrayicon.TrayExtension.json" -Encoding UTF8
-        } catch {}
+        } catch { Log-Status "Failed to write tray settings: $_" "WARN" }
 
         Task-DeepHardening -cfgPath $cfgPath
         if ($GUI_State.ForceMinimal) { Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.MainTabLayout.json" -DataHash @{compactmodetabs=$true; hidemyjdtab=$true} }
@@ -1043,8 +1089,8 @@ function Execute-Operations {
     } catch {
         $ProgressBar.Style = "Continuous"; $ProgressBar.MarqueeAnimationSpeed = 0; $ProgressBar.Value = 0
         Log-Status "CRITICAL ERROR: $_" "FATAL"
-        Log-Status $($_.ScriptStackTrace) "DEBUG"
-        [System.Windows.Forms.MessageBox]::Show("An error occurred during execution. check logs. `nError: $_", "Error")
+        Log-Status "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
+        [System.Windows.Forms.MessageBox]::Show("An error occurred during execution. Check the log file for details.`n`nError: $_", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         return $false
     }
 }
@@ -2109,7 +2155,9 @@ function Show-ActionPrompt {
     $dlg.AcceptButton = $btnConfirm
     $dlg.CancelButton = $btnCancel
     Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $dlg
-    return ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK)
+    try {
+        return ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK)
+    } finally { $dlg.Dispose() }
 }
 
 function Ensure-InstallPathSelected {
@@ -2349,7 +2397,7 @@ function Show-ConfirmationDialog {
     $ResultRefs = @{}
     [int]$optY = 104
     foreach ($key in $KeyMap.Keys) {
-        if ($CurrentState.ContainsKey($key)) {
+        if ($CurrentState.Contains($key)) {
             $cb = New-CheckBox -Parent $optionsPanel -Text $KeyMap[$key] -Location (New-Object System.Drawing.Point(24, $optY)) -Checked $CurrentState[$key]
             $ResultRefs[$key] = $cb
             $optY += 34
@@ -2367,8 +2415,10 @@ function Show-ConfirmationDialog {
     $cForm.CancelButton = $btnCancel
 
     Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $cForm
+    try {
     $result = $cForm.ShowDialog($Form)
-    
+    } finally { $cForm.Dispose() }
+
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
         foreach ($k in $ResultRefs.Keys) {
              $CurrentState[$k] = $ResultRefs[$k].Checked
@@ -2592,6 +2642,11 @@ $Form.Add_Shown({
     }
 })
 $Form.Add_FormClosing({
+    param($sender, $e)
+    if ($Form.UseWaitCursor) {
+        $e.Cancel = $true
+        return
+    }
     if ($LogoBox.Image) { $LogoBox.Image.Dispose() }
     Cleanup-Resources
 })

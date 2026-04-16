@@ -2,6 +2,28 @@
 
 All notable changes to JDownloader-2-Ultimate-Manager will be documented in this file.
 
+## [v13.5.1] - 2026-04-16
+
+### Fixed
+- Download folder double-escaping: `ConvertTo-Json` already handles backslash escaping, so manual `.Replace("\", "\\")` produced corrupted paths (`C:\\\\Downloads` instead of `C:\\Downloads`)
+- Tray config silently failing: `OrderedDictionary.ContainsKey()` throws in PowerShell 5.1; replaced with `.Contains()` so tray settings (close-to-tray, minimize-to-tray) are actually written
+- Language auto-detection broken: `$CurrentLangCode` inside `Load-Language` was local-scoped, never updating the script-level variable; fixed to `$script:CurrentLangCode`
+- Translation keys mismatch: lang.json uses different keys than `$DefaultLang`; added `$script:LangKeyAliases` bridge so translations actually apply to controls
+- BitsTransfer inverted check: first download attempt always failed on BITS before falling back to WebRequest; fixed module-loaded check
+- Get-7Zip returning invalid path on download failure: now returns `$null` with null guards at all call sites
+- Language file download corruption: downloads to temp file first, validates size > 100 bytes, moves to final path only on success; falls back to cached copy
+- Explorer killed during icon patching: replaced `taskkill /f /im explorer.exe` with `ie4uinit.exe -show` for icon cache refresh
+- GDI resource leak in banner nuking: added `try/finally` disposal pattern for Image and Bitmap objects
+- WebClient leak in background theme image preloader: added `try/finally` disposal
+- Confirmation dialog and action prompt forms not disposed after `ShowDialog()`
+- Settings never migrating from legacy `%ProgramData%` path: added `Get-SettingsSourcePath` with auto-migration
+- Form closable during operations: added `FormClosing` guard that blocks close while `UseWaitCursor` is active
+- LAF patching failures silently swallowed: now logs warnings
+- Banner nuke failures silently swallowed: now logs per-file warnings
+- Legacy settings migration failure silently swallowed: now logs warning
+- Multiple config write failures in `Execute-Operations` silently swallowed: now log warnings
+- `Set-JsonConfig` failure silently swallowed: now logs warning with file path
+
 ## [v13.5.0] - 2026-04-15
 
 ### Added
