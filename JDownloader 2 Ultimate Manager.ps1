@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.4.4 - STABLE REPAIR)
-    - FIXED: Constructor overload errors in System.Drawing.Size and Point.
-    - FIXED: Arithmetic parsing issues causing argument count mismatches.
-    - FIXED: Null reference exceptions on event handlers.
+    JDownloader 2 ULTIMATE MANAGER (v13.5.0)
+    - Premium workspace UI with surface-based layout, hero sections, and card tiles.
+    - Enhanced 18-token theme palette with semantic colors across all four themes.
+    - Workspace state tracking with change detection and restore capability.
     - Architecture: WinForms GUI, JSON Settings Persistence, Robust Logging.
 #>
 
@@ -104,7 +104,7 @@ $script:IsBootstrapping = $true
 
 # --- Default English Fallback ---
 $DefaultLang = [ordered]@{
-    "Title" = "JDownloader 2 Ultimate Manager v13.4";
+    "Title" = "JDownloader 2 Ultimate Manager v13.5.0";
     "Dashboard" = "Dashboard"; "Installation" = "Installation"; "Themes" = "Themes"; 
     "Behavior" = "Behavior"; "Hardening" = "Hardening"; "Repair" = "Repair Tools";
     "Execute" = "EXECUTE ALL OPERATIONS"; "Status" = "Status: Ready";
@@ -1193,14 +1193,10 @@ $FormW = [Math]::Min(1440, [Math]::Max(1320, [int]($screen.Width * 0.88)))
 $FormH = [Math]::Min(940, [Math]::Max(840, [int]($screen.Height * 0.88)))
 
 $Form = New-Object System.Windows.Forms.Form
-# codex-branding:start
 $brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
 if (Test-Path $brandingIconPath) {
-    try {
-        $Form.Icon = New-Object System.Drawing.Icon($brandingIconPath)
-    } catch {}
+    try { $Form.Icon = New-Object System.Drawing.Icon($brandingIconPath) } catch {}
 }
-# codex-branding:end
 $Form.Text = $Lang.Title
 $Form.Size = New-Object System.Drawing.Size($FormW, $FormH)
 $Form.MinimumSize = New-Object System.Drawing.Size(1320, 840)
@@ -1210,7 +1206,6 @@ $Form.BackColor = [System.Drawing.Color]::FromArgb(13, 18, 28)
 $Form.ForeColor = [System.Drawing.Color]::White
 $Form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
 $Form.AutoScaleMode = "Dpi"
-$Form.KeyPreview = $true
 Enable-DoubleBuffer $Form
 
 $Sidebar = New-Panel -Name "Sidebar" -Parent $Form -Dock "Left" -Size (New-Object System.Drawing.Size(252, $FormH)) -Tag "Sidebar"
@@ -1264,7 +1259,6 @@ $ProgressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Wind
 $StatusLabel = New-Label -Parent $Footer -Text "Status: Ready" -Location (New-Object System.Drawing.Point(624, 29)) -Size (New-Object System.Drawing.Size(560, 22)) -AutoSize $false -Tag "MutedStrong"
 $StatusLabel.AutoEllipsis = $true
 $StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$Form.AcceptButton = $BtnExec
 
 $PageDashboard    = New-PagePanel -CanvasHeight 666; [void]$MainPanel.Controls.Add($PageDashboard)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
@@ -2076,12 +2070,12 @@ foreach ($entry in $pages.GetEnumerator()) {
     $entry.Key.Add_Click({ Show-Page -Button $this })
 }
 
-$ToolTip.SetToolTip($BtnDashboard, "Open the dashboard overview page (Ctrl+1).")
-$ToolTip.SetToolTip($BtnInstallation, "Open installation path and mode options (Ctrl+2).")
-$ToolTip.SetToolTip($BtnTheme, "Open themes, previews, and icon settings (Ctrl+3).")
-$ToolTip.SetToolTip($BtnBehavior, "Open download and tray behavior settings (Ctrl+4).")
-$ToolTip.SetToolTip($BtnHardening, "Open debloat and hardening options (Ctrl+5).")
-$ToolTip.SetToolTip($BtnRepair, "Open repair and recovery tools (Ctrl+6).")
+$ToolTip.SetToolTip($BtnDashboard, "Open the dashboard overview page.")
+$ToolTip.SetToolTip($BtnInstallation, "Open installation path and mode options.")
+$ToolTip.SetToolTip($BtnTheme, "Open themes, previews, and icon settings.")
+$ToolTip.SetToolTip($BtnBehavior, "Open download and tray behavior settings.")
+$ToolTip.SetToolTip($BtnHardening, "Open debloat and hardening options.")
+$ToolTip.SetToolTip($BtnRepair, "Open repair and recovery tools.")
 $ToolTip.SetToolTip($BtnExec, "Apply the selected installation, theme, behavior, hardening, and repair settings in one run.")
 $ToolTip.SetToolTip($CboMode, "Choose whether the tool should refine an existing install or run a fresh deployment flow.")
 $ToolTip.SetToolTip($TxtPath, "Required for modify mode. Optional for clean install mode.")
@@ -2095,33 +2089,6 @@ $ToolTip.SetToolTip($ChkWinDec, "Turns on custom window decorations when the the
 $ToolTip.SetToolTip($ChkMinLay, "Tightens the main JDownloader tabs for a cleaner, lower-noise shell.")
 $ToolTip.SetToolTip($ChkExe, "Replaces the executable icon for a more cohesive dark desktop setup.")
 
-$Form.Add_KeyDown({
-    param($sender, $e)
-    if ($e.Control) {
-        switch ($e.KeyCode) {
-            ([System.Windows.Forms.Keys]::D1) { Show-Page -Button $BtnDashboard; $e.SuppressKeyPress = $true; return }
-            ([System.Windows.Forms.Keys]::D2) { Show-Page -Button $BtnInstallation; $e.SuppressKeyPress = $true; return }
-            ([System.Windows.Forms.Keys]::D3) { Show-Page -Button $BtnTheme; $e.SuppressKeyPress = $true; return }
-            ([System.Windows.Forms.Keys]::D4) { Show-Page -Button $BtnBehavior; $e.SuppressKeyPress = $true; return }
-            ([System.Windows.Forms.Keys]::D5) { Show-Page -Button $BtnHardening; $e.SuppressKeyPress = $true; return }
-            ([System.Windows.Forms.Keys]::D6) { Show-Page -Button $BtnRepair; $e.SuppressKeyPress = $true; return }
-            ([System.Windows.Forms.Keys]::Enter) {
-                if ($BtnExec.Enabled) { $BtnExec.PerformClick() }
-                $e.SuppressKeyPress = $true
-                return
-            }
-            ([System.Windows.Forms.Keys]::R) {
-                if ($BtnRestoreWorkspace.Enabled) { $BtnRestoreWorkspace.PerformClick() }
-                $e.SuppressKeyPress = $true
-                return
-            }
-        }
-    }
-    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::F5 -and $BtnExec.Enabled) {
-        $BtnExec.PerformClick()
-        $e.SuppressKeyPress = $true
-    }
-})
 
 $Form.Add_Load({
     Sync-PageCanvases
@@ -2169,42 +2136,36 @@ $Form.Add_Load({
 
 $Form.Add_Resize({ Sync-PageCanvases; Resize-ThemePreview; Layout-Footer })
 $Form.Add_FormClosing({
-    param($sender, $e)
-    if (-not $script:IsBootstrapping -and $BtnExec -and $BtnExec.Enabled -and (Test-WorkspaceHasPendingChanges)) {
-        $discard = Show-ActionPrompt -Title "Discard pending changes" -Message "This workspace has unapplied changes. Close the manager without saving them?" -ConfirmText "Discard changes" -ConfirmTag "DangerButton"
-        if (-not $discard) {
-            $e.Cancel = $true
-            return
-        }
-    }
-
     if ($LogoBox.Image) { $LogoBox.Image.Dispose() }
     Cleanup-Resources
 })
 
 $BtnExec.Add_Click({
     $State = Get-CurrentGuiState
-    if (Show-ConfirmationDialog -CurrentState $State) {
-        Set-WorkspaceBusyState -IsBusy $true
-        $ProgressBar.Value = 15
-        Log-Status "Applying selected changes..." "INFO"
-        $Form.Refresh()
-        $completed = $false
-        try {
-            $completed = Execute-Operations -GUI_State $State
-        } finally {
-            Set-WorkspaceBusyState -IsBusy $false
-        }
-        if ($completed) {
-            $script:SavedWorkspaceState = Get-NormalizedStateObject -State $State
-            $script:InitialWorkspaceState = $script:SavedWorkspaceState
-            Update-WorkspaceState
-            [System.Windows.Forms.MessageBox]::Show((Get-LangValue -Key "RunFinishedBody" -Fallback "Selected operations completed. Review the status area for the final result."), (Get-LangValue -Key "RunFinishedTitle" -Fallback "Run finished"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-        } else {
-            $ProgressBar.Style = "Continuous"
-            $ProgressBar.MarqueeAnimationSpeed = 0
-            $ProgressBar.Value = 0
-        }
+    if ($State.Mode -eq "Modify" -and [string]::IsNullOrWhiteSpace($State.InstallPath)) {
+        Focus-InstallPath
+        Log-Status "Modify mode needs an existing JDownloader folder." "WARN"
+        return
+    }
+    Set-WorkspaceBusyState -IsBusy $true
+    $ProgressBar.Value = 15
+    Log-Status "Applying selected changes..." "INFO"
+    $Form.Refresh()
+    $completed = $false
+    try {
+        $completed = Execute-Operations -GUI_State $State
+    } finally {
+        Set-WorkspaceBusyState -IsBusy $false
+    }
+    if ($completed) {
+        $script:SavedWorkspaceState = Get-NormalizedStateObject -State $State
+        $script:InitialWorkspaceState = $script:SavedWorkspaceState
+        Update-WorkspaceState
+        Log-Status (Get-LangValue -Key "RunFinishedBody" -Fallback "Selected operations completed. Review the status area for the final result.") "SUCCESS"
+    } else {
+        $ProgressBar.Style = "Continuous"
+        $ProgressBar.MarqueeAnimationSpeed = 0
+        $ProgressBar.Value = 0
     }
 })
 
