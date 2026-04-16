@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.5.1)
+    JDownloader 2 ULTIMATE MANAGER (v13.6.0)
     - Premium workspace UI with surface-based layout, hero sections, and card tiles.
     - Enhanced 18-token theme palette with semantic colors across all four themes.
     - Workspace state tracking with change detection and restore capability.
@@ -387,10 +387,14 @@ $ThemeDefinitions = [ordered]@{
 # 5. EMBEDDED CONFIGS (TEMPLATES)
 # ==========================================
 $Template_GUI = @'
-{ "overviewpaneldownloadlinksfailedcountvisible": false, "downloadview": "ALL", "linkpropertiespaneldownloadpasswordvisible": true, "speedmetervisible": true, "overviewpaneldownloadpackagecountvisible": true, "linkpropertiespanelfilenamevisible": true, "titlepattern": "|#TITLE|| - #SPEED/s|| - #UPDATENOTIFY|", "overviewpaneltotalinfovisible": true, "linkpropertiespanelchecksumvisible": true, "downloadspropertiespanelsavetovisible": true, "packagesbackgroundhighlightenabled": true, "overviewpaneldownloadlinkcountvisible": true, "downloadspropertiespanelpackagenamevisible": true, "overviewpaneldownloadlinksfinishedcountvisible": false, "overviewpanelsmartinfovisible": true, "availablecolumntextvisible": false, "overviewpaneldownloadbytesremainingvisible": true, "bannerenabled": false, "showfullhostname": false, "overviewpanellinkgrabberstatusonlinevisible": true, "linkpropertiespanelcommentvisible": true, "clipboardmonitored": true, "donatebuttonstate": "CUSTOM_HIDDEN", "donatebuttonlatestautochange": 1764274189351, "filecountinsizecolumnvisible": true, "clipboardskipmode": "ON_STARTUP", "premiumexpirewarningenabled": false, "downloadstablerefreshinterval": 1000, "overviewpaneldownloadpanelincludedisabledlinks": true, "tablewraparoundenabled": true, "specialdealoboomdialogvisibleonstartup": false, "tooltipenabled": true, "statusbaraddpremiumbuttonvisible": false, "captchadialogborderaroundimageenabled": true, "tablemouseoverhighlightenabled": true, "linkpropertiespanelsavetovisible": true, "overviewpanellinkgrabberlinkscountvisible": true, "clipboardmonitorprocesshtmlflavor": true, "overviewpanelselectedinfovisible": true, "linkpropertiespaneldownloadfromvisible": false, "sortcolumnhighlightenabled": true, "colorediconsfordisabledhostercolumnenabled": true, "premiumalertspeedcolumnenabled": false, "downloadspropertiespanelcommentvisible": true, "overviewpaneldownloadtotalbytesvisible": true, "overviewpanellinkgrabberpackagecountvisible": true, "windowswindowmanagerforegroundlocktimeout": 2147483647, "linkgrabbertabpropertiespanelvisible": true, "configviewvisible": true, "downloadstabpropertiespanelvisible": true, "selecteddownloadsearchcategory": "FILENAME", "overviewpaneldownloadetavisible": true, "savedownloadviewcrosssessionenabled": false, "overviewpanellinkgrabberstatusunknownvisible": true, "myjdownloaderviewvisible": false, "downloadspropertiespanelchecksumvisible": true, "downloadspropertiespanelfilenamevisible": false, "speedmetertimeframe": 30000, "mainwindowalwaysontop": false, "overviewpaneldownloadconnectionsvisible": true, "helpdialogsenabled": false, "lookandfeeltheme": "FLATLAF_DARK", "linkpropertiespanelarchivepasswordvisible": true, "horizontalscrollbarsinlinkgrabbertableenabled": false, "downloadspropertiespaneldownloadfromvisible": false, "overviewpanellinkgrabberstatusofflinevisible": true, "balloonnotificationenabled": true, "activeconfigpanel": "jd.gui.swing.jdgui.views.settings.panels.advanced.AdvancedSettings", "donationnotifyid": null, "speedmeterframespersecond": 4, "linkpropertiespanelpackagenamevisible": true, "passwordprotectionenabled": false, "specialdealsenabled": false, "overviewpaneldownloadspeedvisible": true, "premiumstatusbardisplay": "GROUP_BY_ACCOUNT_TYPE", "maxsizeunit": "TiB", "downloadpaneloverviewsettingsvisible": false, "tooltipdelay": 2000, "overviewpaneldownloadbytesloadedvisible": true, "speedinwindowtitle": "WHEN_WINDOW_IS_MINIMIZED", "overviewpanellinkgrabbertotalbytesvisible": true, "selectedlinkgrabbersearchcategory": "FILENAME", "downloadtaboverviewvisible": true, "rlywarnlevel": "NORMAL", "overviewpanellinkgrabberhostercountvisible": true, "downloadspropertiespaneldownloadpasswordvisible": true, "dialogdefaulttimeoutinms": 20000, "overviewpanellinkgrabberincludedisabledlinks": true, "hidesinglechildpackages": false, "linkgrabberbottombarposition": "SOUTH", "linkgrabbertaboverviewvisible": true, "overviewpaneldownloadlinksskippedcountvisible": false, "windowswindowmanageraltkeyworkaroundenabled": true, "updatebuttonflashingenabled": false, "overviewpanelvisibleonlyinfovisible": true, "linkgrabbersidebarvisible": true, "downloadspropertiespanelarchivepasswordvisible": true, "captchaexchangeenabled": false }
+{ "overviewpaneldownloadlinksfailedcountvisible": false, "downloadview": "ALL", "linkpropertiespaneldownloadpasswordvisible": true, "speedmetervisible": true, "overviewpaneldownloadpackagecountvisible": true, "linkpropertiespanelfilenamevisible": true, "titlepattern": "|#TITLE|| - #SPEED/s|| - #UPDATENOTIFY|", "overviewpaneltotalinfovisible": true, "linkpropertiespanelchecksumvisible": true, "downloadspropertiespanelsavetovisible": true, "packagesbackgroundhighlightenabled": false, "overviewpaneldownloadlinkcountvisible": true, "downloadspropertiespanelpackagenamevisible": true, "overviewpaneldownloadlinksfinishedcountvisible": false, "overviewpanelsmartinfovisible": true, "availablecolumntextvisible": false, "overviewpaneldownloadbytesremainingvisible": true, "bannerenabled": false, "showfullhostname": false, "overviewpanellinkgrabberstatusonlinevisible": true, "linkpropertiespanelcommentvisible": true, "clipboardmonitored": true, "donatebuttonstate": "ALWAYS_HIDDEN", "donatebuttonlatestautochange": 1764274189351, "filecountinsizecolumnvisible": true, "clipboardskipmode": "ON_STARTUP", "premiumexpirewarningenabled": false, "downloadstablerefreshinterval": 1000, "overviewpaneldownloadpanelincludedisabledlinks": true, "tablewraparoundenabled": true, "specialdealoboomdialogvisibleonstartup": false, "tooltipenabled": true, "statusbaraddpremiumbuttonvisible": false, "captchadialogborderaroundimageenabled": true, "tablemouseoverhighlightenabled": true, "linkpropertiespanelsavetovisible": true, "overviewpanellinkgrabberlinkscountvisible": true, "clipboardmonitorprocesshtmlflavor": true, "overviewpanelselectedinfovisible": true, "linkpropertiespaneldownloadfromvisible": false, "sortcolumnhighlightenabled": true, "colorediconsfordisabledhostercolumnenabled": true, "premiumalertspeedcolumnenabled": false, "premiumalertetacolumnenabled": false, "premiumalerttaskcolumnenabled": false, "premiumdisabledwarningflashenabled": false, "downloadspropertiespanelcommentvisible": true, "overviewpaneldownloadtotalbytesvisible": true, "overviewpanellinkgrabberpackagecountvisible": true, "windowswindowmanagerforegroundlocktimeout": 2147483647, "linkgrabbertabpropertiespanelvisible": true, "configviewvisible": true, "downloadstabpropertiespanelvisible": true, "selecteddownloadsearchcategory": "FILENAME", "overviewpaneldownloadetavisible": true, "savedownloadviewcrosssessionenabled": false, "overviewpanellinkgrabberstatusunknownvisible": true, "myjdownloaderviewvisible": false, "downloadspropertiespanelchecksumvisible": true, "downloadspropertiespanelfilenamevisible": false, "speedmetertimeframe": 30000, "mainwindowalwaysontop": false, "overviewpaneldownloadconnectionsvisible": true, "helpdialogsenabled": false, "lookandfeeltheme": "FLATLAF_DARK", "linkpropertiespanelarchivepasswordvisible": true, "horizontalscrollbarsinlinkgrabbertableenabled": false, "downloadspropertiespaneldownloadfromvisible": false, "overviewpanellinkgrabberstatusofflinevisible": true, "balloonnotificationenabled": true, "activeconfigpanel": "jd.gui.swing.jdgui.views.settings.panels.advanced.AdvancedSettings", "donationnotifyid": null, "speedmeterframespersecond": 4, "linkpropertiespanelpackagenamevisible": true, "passwordprotectionenabled": false, "specialdealsenabled": false, "overviewpaneldownloadspeedvisible": true, "premiumstatusbardisplay": "GROUP_BY_ACCOUNT_TYPE", "maxsizeunit": "TiB", "downloadpaneloverviewsettingsvisible": false, "tooltipdelay": 2000, "overviewpaneldownloadbytesloadedvisible": true, "speedinwindowtitle": "WHEN_WINDOW_IS_MINIMIZED", "overviewpanellinkgrabbertotalbytesvisible": true, "selectedlinkgrabbersearchcategory": "FILENAME", "downloadtaboverviewvisible": true, "rlywarnlevel": "NORMAL", "overviewpanellinkgrabberhostercountvisible": true, "downloadspropertiespaneldownloadpasswordvisible": true, "dialogdefaulttimeoutinms": 20000, "overviewpanellinkgrabberincludedisabledlinks": true, "hidesinglechildpackages": false, "linkgrabberbottombarposition": "SOUTH", "linkgrabbertaboverviewvisible": true, "overviewpaneldownloadlinksskippedcountvisible": false, "windowswindowmanageraltkeyworkaroundenabled": true, "updatebuttonflashingenabled": false, "overviewpanelvisibleonlyinfovisible": true, "linkgrabbersidebarvisible": true, "downloadspropertiespanelarchivepasswordvisible": true, "captchaexchangeenabled": false, "hatecaptchastextincaptchadialogvisible": false, "taskbarflashenabled": false, "clipboarddisabledwarningflashenabled": false, "windowstaskbarprogressdisplay": "TOTAL_PROGRESS" }
 '@
-$Template_General = '{"maxsimultanedownloadsperhost":1,"delaywritemode":"AUTO","iffileexistsaction":"ASK_FOR_EACH_FILE","dupemanagerenabled":true,"forcemirrordetectioncaseinsensitive":true,"autoopencontainerafterdownload":true,"preferbouncycastlefortls":false,"autostartdownloadoption":"ONLY_IF_EXIT_WITH_RUNNING_DOWNLOADS","maxsimultanedownloads":3,"pausespeed":10240,"defaultdownloadfolder":"C:\\Downloads","windowsjnaidledetectorenabled":true,"downloadspeedlimitrememberedenabled":true,"closedwithrunningdownloads":false,"autostartcountdownseconds":10,"maxdownloadsperhostenabled":false,"maxchunksperfile":1,"sambaprefetchenabled":true,"showcountdownonautostartdownloads":true,"savelinkgrabberlistenabled":true,"onskipduetoalreadyexistsaction":"SKIP_FILE","hashretryenabled":false,"sharedmemorystateenabled":false,"convertrelativepathsjdroot":true,"keepxoldlists":5,"useavailableaccounts":true,"cleanupafterdownloadaction":"REMOVE_FINISHED_AND_DELETE_EXTRACTED","hashcheckenabled":true,"downloadspeedlimitenabled":false,"downloadspeedlimit":51200,"hidesinglechildpackages":true}'
+$Template_General = '{"maxsimultanedownloadsperhost":1,"delaywritemode":"AUTO","iffileexistsaction":"ASK_FOR_EACH_FILE","dupemanagerenabled":true,"forcemirrordetectioncaseinsensitive":true,"autoopencontainerafterdownload":true,"preferbouncycastlefortls":false,"autostartdownloadoption":"ONLY_IF_EXIT_WITH_RUNNING_DOWNLOADS","maxsimultanedownloads":3,"pausespeed":10240,"defaultdownloadfolder":"C:\\Downloads","windowsjnaidledetectorenabled":true,"downloadspeedlimitrememberedenabled":true,"closedwithrunningdownloads":false,"autostartcountdownseconds":10,"maxdownloadsperhostenabled":false,"maxchunksperfile":1,"sambaprefetchenabled":true,"showcountdownonautostartdownloads":true,"savelinkgrabberlistenabled":true,"onskipduetoalreadyexistsaction":"SKIP_FILE","hashretryenabled":false,"sharedmemorystateenabled":false,"convertrelativepathsjdroot":true,"keepxoldlists":5,"useavailableaccounts":true,"cleanupafterdownloadaction":"REMOVE_FINISHED_AND_DELETE_EXTRACTED","hashcheckenabled":true,"downloadspeedlimitenabled":false,"downloadspeedlimit":51200,"hidesinglechildpackages":true,"maxpluginretries":3,"forcedfreespaceondisk":512,"freespacecheckenabled":true,"useoriginallastmodified":false,"maxbuffersize":500,"flushbuffertimeout":120000,"flushbufferlevel":80,"deleteemptysubfoldersafterdeletingdownloadedfilesenabled":true,"cleanupfilenames":false,"waittimeonconnectionloss":300000,"downloadtempunavailableretrywaittime":1800000,"downloadhostunavailableretrywaittime":3600000}'
 $Template_Tray = '{"freshinstall":false,"onminimizeaction":"TO_TASKBAR","tooltipenabled":true,"trayiconclipboardindicatorenabled":false,"oncloseaction":"ASK","tooglewindowstatuswithsingleclickenabled":false,"greyiconenabled":false,"gnometrayicontransparentenabled":true,"enabled":true,"startminimizedenabled":false,"trayonlyvisibleifwindowishiddenenabled":false}'
+$Template_Update = '{"autoupdatecheckenabled":true,"installUpdatesSilentlyIfPossibleEnabled":true,"doAskMeBeforeInstallingAnUpdateEnabled":false,"installUpdatesOnExitEnabled":true,"jarDiffEnabled":true}'
+$Template_BubbleNotify = '{"bubblenotifyenabledstate":"NEVER"}'
+$Template_RemoteAPI = '{"deprecatedapienabled":false,"deprecatedapilocalhostonly":true,"externinterfaceenabled":true,"externinterfacelocalhostonly":true,"localapiserverheaderxframeoptions":"DENY","localapiserverheaderxxssprotection":"1; mode=block","localapiserverheadercontentsecuritypolicy":"default-src '"'"'self'"'"'"}'
+$Template_SilentMode = '{"manualenabled":false,"autoresetonstartupenabled":true,"autotrigger":"NEVER","oncaptchaduringsilentmodeaction":"WAIT_IN_BACKGROUND_UNTIL_WINDOW_GETS_FOCUS_OR_TIMEOUT"}'
 
 # ==========================================
 # 6. CORE UTILITIES & LOGGING
@@ -818,8 +822,34 @@ function Detect-SystemTheme {
 # 7. JDOWNLOADER LOGIC
 # ==========================================
 function Detect-JDPath {
-    $paths = @("C:\Program Files\JDownloader", "C:\Program Files (x86)\JDownloader", "$env:LOCALAPPDATA\JDownloader 2", "$env:USERPROFILE\AppData\Local\JDownloader 2.0")
+    $paths = @(
+        "C:\Program Files\JDownloader"
+        "C:\Program Files (x86)\JDownloader"
+        "$env:LOCALAPPDATA\JDownloader 2"
+        "$env:LOCALAPPDATA\JDownloader 2.0"
+        "$env:USERPROFILE\AppData\Local\JDownloader 2"
+        "$env:USERPROFILE\AppData\Local\JDownloader 2.0"
+        "$env:USERPROFILE\JDownloader 2"
+        "$env:USERPROFILE\JDownloader"
+        "$env:APPDATA\JDownloader 2"
+        "D:\JDownloader 2"
+        "D:\JDownloader"
+        "$env:ProgramData\JDownloader 2"
+    )
     foreach ($p in $paths) { if (Test-Path (Join-Path $p "JDownloader2.exe")) { return $p } }
+    # Fallback: check registry for install location
+    try {
+        $regPaths = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*")
+        foreach ($rp in $regPaths) {
+            $entries = Get-ItemProperty -Path $rp -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "JDownloader" -and $_.InstallLocation }
+            if ($entries) {
+                foreach ($e in $entries) {
+                    $loc = $e.InstallLocation.TrimEnd('\')
+                    if (Test-Path (Join-Path $loc "JDownloader2.exe")) { return $loc }
+                }
+            }
+        }
+    } catch {}
     return $null
 }
 
@@ -931,11 +961,69 @@ function Set-JsonConfig {
 }
 
 function Task-DeepHardening {
-    param($cfgPath)
+    param($cfgPath, $HardenState)
+    Log-Status "Applying hardening passes..."
+
+    # Always-on: remove contribute panels
     Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.AdvancedConfig.json" -DataHash @{"org.jdownloader.gui.jdgui.settings.AboutConfigPanel.contributepanelvisible"=$false}
     Set-JsonConfig -Path "$cfgPath\org.jdownloader.controlling.WidgetStateManager.json" -DataHash @{"contributepanelvisible"=$false}
     Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.views.jdgui.GUILayout.json" -DataHash @{"contributepanel_visible"=$false}
     Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.advanced.AdvancedSettings.json" -DataHash @{"contributepanel_enabled"=$false}
+
+    # Always-on: disable bubble notifications (noise)
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.notify.gui.BubbleNotifyConfig.json" -DataHash ($Template_BubbleNotify | ConvertFrom-Json | ForEach-Object {
+        $h = @{}; $_.PSObject.Properties | ForEach-Object { $h[$_.Name] = $_.Value }; $h
+    })
+
+    # Privacy: disable local API remote access by default
+    if ($HardenState -and $HardenState.DisableLocalAPI) {
+        Set-JsonConfig -Path "$cfgPath\org.jdownloader.api.RemoteAPIConfig.json" -DataHash @{
+            "deprecatedapienabled" = $false
+            "deprecatedapilocalhostonly" = $true
+            "externinterfaceenabled" = $true
+            "externinterfacelocalhostonly" = $true
+            "localapiserverheaderxframeoptions" = "DENY"
+            "localapiserverheaderxxssprotection" = "1; mode=block"
+        }
+    }
+
+    # Privacy: disable clipboard monitoring if requested
+    if ($HardenState -and $HardenState.DisableClipboard) {
+        $guiFile = "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json"
+        if (Test-Path $guiFile) {
+            try {
+                $gui = Get-Content $guiFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                $gui.clipboardmonitored = $false
+                $gui | ConvertTo-Json -Depth 100 | Set-Content $guiFile -Encoding UTF8
+            } catch { Log-Status "Failed to disable clipboard monitoring: $_" "WARN" }
+        }
+    }
+
+    # Silent mode config
+    Set-JsonConfig -Path "$cfgPath\org.jdownloader.settings.SilentModeSettings.json" -DataHash @{
+        "manualenabled" = $false
+        "autoresetonstartupenabled" = $true
+        "autotrigger" = "NEVER"
+        "oncaptchaduringsilentmodeaction" = "WAIT_IN_BACKGROUND_UNTIL_WINDOW_GETS_FOCUS_OR_TIMEOUT"
+    }
+
+    # JVM tuning: write vmoptions file if it does not already exist
+    if ($HardenState -and $HardenState.WriteVmOptions) {
+        $jdRoot = Split-Path $cfgPath -Parent
+        $vmFile = "$jdRoot\JDownloader2.vmoptions"
+        if (-not (Test-Path $vmFile)) {
+            try {
+                $vmContent = @(
+                    "-XX:-UsePerfData"
+                    "-Djava.net.preferIPv4Stack=true"
+                ) -join "`r`n"
+                Set-Content -Path $vmFile -Value $vmContent -Encoding UTF8
+                Log-Status "JVM options file written for performance tuning." "SUCCESS"
+            } catch { Log-Status "Failed to write JDownloader2.vmoptions: $_" "WARN" }
+        } else {
+            Log-Status "JDownloader2.vmoptions already exists, skipping." "INFO"
+        }
+    }
 }
 
 function Task-Install {
@@ -986,8 +1074,54 @@ function Trigger-Update {
 function Run-Audit {
     param($InstallPath)
     $issues = 0
-    if (-not (Test-Path "$InstallPath\cfg\org.jdownloader.settings.GeneralSettings.json")) { $issues++ }
-    if ($issues -gt 0) { Log-Status "Audit found $issues issues." "WARN" } else { Log-Status "Audit passed." "SUCCESS" }
+    $warnings = @()
+
+    # Core files
+    if (-not (Test-Path "$InstallPath\JDownloader2.exe")) { $issues++; $warnings += "JDownloader2.exe missing" }
+    if (-not (Test-Path "$InstallPath\JDownloader.jar")) { $issues++; $warnings += "JDownloader.jar missing (core engine)" }
+
+    # Config directory
+    $cfgPath = "$InstallPath\cfg"
+    if (-not (Test-Path $cfgPath)) { $issues++; $warnings += "cfg/ directory missing entirely" }
+    else {
+        $criticalConfigs = @(
+            "org.jdownloader.settings.GeneralSettings.json"
+            "org.jdownloader.settings.GraphicalUserInterfaceSettings.json"
+            "org.jdownloader.gui.jdtrayicon.TrayExtension.json"
+        )
+        foreach ($cfg in $criticalConfigs) {
+            if (-not (Test-Path "$cfgPath\$cfg")) { $issues++; $warnings += "Missing: $cfg" }
+            else {
+                try { $null = Get-Content "$cfgPath\$cfg" -Raw | ConvertFrom-Json } catch { $issues++; $warnings += "Corrupt JSON: $cfg" }
+            }
+        }
+
+        # Check for leftover tmp files
+        $tmpFiles = Get-ChildItem "$cfgPath" -Filter "*.tmp" -ErrorAction SilentlyContinue
+        if ($tmpFiles -and $tmpFiles.Count -gt 0) { $warnings += "$($tmpFiles.Count) stale .tmp files in cfg/" }
+
+        # Check LAF directory
+        $lafPath = "$cfgPath\laf"
+        if (Test-Path $lafPath) {
+            $lafFiles = Get-ChildItem $lafPath -Filter "*.json" -ErrorAction SilentlyContinue
+            if (-not $lafFiles -or $lafFiles.Count -eq 0) { $warnings += "laf/ directory exists but contains no theme files" }
+        }
+    }
+
+    # Check for update artifacts
+    if (Test-Path "$InstallPath\update\versioninfo\JD\rev") {
+        $rev = (Get-Content "$InstallPath\update\versioninfo\JD\rev" -ErrorAction SilentlyContinue).Trim()
+        if ($rev) { Log-Status "JDownloader core revision: $rev" "INFO" }
+    }
+
+    # Report
+    if ($issues -gt 0) {
+        Log-Status "Audit found $issues issue(s): $($warnings -join '; ')" "WARN"
+    } elseif ($warnings.Count -gt 0) {
+        Log-Status "Audit passed with notes: $($warnings -join '; ')" "INFO"
+    } else {
+        Log-Status "Audit passed. All critical files and configs are intact." "SUCCESS"
+    }
 }
 
 function Execute-Operations {
@@ -1052,6 +1186,7 @@ function Execute-Operations {
             try {
                 $guiObj = $Template_GUI | ConvertFrom-Json
                 $guiObj.lookandfeeltheme = $Theme.LafID
+                if ($GUI_State.Contains("ClipboardMonitor")) { $guiObj.clipboardmonitored = [bool]$GUI_State.ClipboardMonitor }
                 $guiObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json" -Encoding UTF8
             } catch { Log-Status "Failed to write GUI settings: $_" "WARN" }
         }
@@ -1065,6 +1200,16 @@ function Execute-Operations {
                 $genObj.defaultdownloadfolder = $GUI_State.DlFolder
             }
             $genObj.pausespeed = [int]$GUI_State.PauseSpeed
+            if ($GUI_State.Contains("MaxChunks")) { $genObj.maxchunksperfile = [int]$GUI_State.MaxChunks }
+            if ($GUI_State.Contains("MaxPerHost")) { $genObj.maxsimultanedownloadsperhost = [int]$GUI_State.MaxPerHost }
+            if ($GUI_State.Contains("MaxPerHostEnabled")) { $genObj.maxdownloadsperhostenabled = [bool]$GUI_State.MaxPerHostEnabled }
+            if ($GUI_State.Contains("FileExistsAction")) { $genObj.iffileexistsaction = [string]$GUI_State.FileExistsAction }
+            if ($GUI_State.Contains("SpeedLimitEnabled")) {
+                $genObj.downloadspeedlimitenabled = [bool]$GUI_State.SpeedLimitEnabled
+                if ($GUI_State.Contains("SpeedLimit")) { $genObj.downloadspeedlimit = [int]$GUI_State.SpeedLimit }
+            }
+            if ($GUI_State.Contains("HashCheck")) { $genObj.hashcheckenabled = [bool]$GUI_State.HashCheck }
+            if ($GUI_State.Contains("PreserveFileDate")) { $genObj.useoriginallastmodified = [bool]$GUI_State.PreserveFileDate }
             $genObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GeneralSettings.json" -Encoding UTF8
         } catch { Log-Status "Failed to write general settings: $_" "WARN" }
 
@@ -1076,7 +1221,18 @@ function Execute-Operations {
             $trayObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.gui.jdtrayicon.TrayExtension.json" -Encoding UTF8
         } catch { Log-Status "Failed to write tray settings: $_" "WARN" }
 
-        Task-DeepHardening -cfgPath $cfgPath
+        # Write update settings
+        try {
+            $updateObj = $Template_Update | ConvertFrom-Json
+            $updateObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.updatev2.UpdateSettings.json" -Encoding UTF8
+        } catch { Log-Status "Failed to write update settings: $_" "WARN" }
+
+        $hardenState = @{
+            DisableLocalAPI  = if ($GUI_State.Contains("DisableLocalAPI")) { [bool]$GUI_State.DisableLocalAPI } else { $true }
+            DisableClipboard = if ($GUI_State.Contains("ClipboardMonitor")) { -not [bool]$GUI_State.ClipboardMonitor } else { $false }
+            WriteVmOptions   = if ($GUI_State.Contains("WriteVmOptions")) { [bool]$GUI_State.WriteVmOptions } else { $false }
+        }
+        Task-DeepHardening -cfgPath $cfgPath -HardenState $hardenState
         if ($GUI_State.ForceMinimal) { Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.MainTabLayout.json" -DataHash @{compactmodetabs=$true; hidemyjdtab=$true} }
         Task-NukeBanners -InstallPath $JDPath
         if ($GUI_State.PatchExe) { Task-PatchExeIcon -InstallPath $JDPath }
@@ -1429,8 +1585,8 @@ $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
-$PageBehavior     = New-PagePanel -CanvasHeight 560; [void]$MainPanel.Controls.Add($PageBehavior)
-$PageHardening    = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageHardening)
+$PageBehavior     = New-PagePanel -CanvasHeight 740; [void]$MainPanel.Controls.Add($PageBehavior)
+$PageHardening    = New-PagePanel -CanvasHeight 780; [void]$MainPanel.Controls.Add($PageHardening)
 $PageRepair       = New-PagePanel -CanvasHeight 572; [void]$MainPanel.Controls.Add($PageRepair)
 
 $DashboardCanvas = Get-PageCanvas $PageDashboard
@@ -1656,6 +1812,13 @@ function Apply-StateToControls {
         if ($State.PSObject.Properties.Name -contains "CloseToTray") { $ChkCloseTray.Checked = [bool]$State.CloseToTray }
         if ($State.PSObject.Properties.Name -contains "PatchExe") { $ChkExe.Checked = [bool]$State.PatchExe }
         if ($State.PSObject.Properties.Name -contains "AutoUpdate") { $ChkUpdate.Checked = [bool]$State.AutoUpdate }
+        if ($State.PSObject.Properties.Name -contains "MaxChunks") { $NumChunks.Value = [decimal]$State.MaxChunks }
+        if ($State.PSObject.Properties.Name -contains "MaxPerHost") { $NumPerHost.Value = [decimal]$State.MaxPerHost }
+        if ($State.PSObject.Properties.Name -contains "HashCheck") { $ChkHashCheck.Checked = [bool]$State.HashCheck }
+        if ($State.PSObject.Properties.Name -contains "PreserveFileDate") { $ChkPreserveDate.Checked = [bool]$State.PreserveFileDate }
+        if ($State.PSObject.Properties.Name -contains "ClipboardMonitor") { $ChkClipboard.Checked = [bool]$State.ClipboardMonitor }
+        if ($State.PSObject.Properties.Name -contains "DisableLocalAPI") { $ChkDisableAPI.Checked = [bool]$State.DisableLocalAPI }
+        if ($State.PSObject.Properties.Name -contains "WriteVmOptions") { $ChkVmOptions.Checked = [bool]$State.WriteVmOptions }
         if ($State.PSObject.Properties.Name -contains "Mode") {
             if ($State.Mode -eq "Modify") { $CboMode.SelectedIndex = 0 }
             elseif ($State.PSObject.Properties.Name -contains "InstallSource" -and $State.InstallSource -eq "Mega") { $CboMode.SelectedIndex = 2 }
@@ -1688,23 +1851,30 @@ function Get-CurrentGuiState {
     }
 
     return [ordered]@{
-        Mode         = $mode
-        InstallSource= $src
-        InstallPath  = $TxtPath.Text.Trim()
-        ThemeName    = $CboTheme.Text
-        GuiThemeName = $CboGuiTheme.Text
-        LanguageCode = $CboLang.Text
-        IconPack     = $CboIcons.Text
-        WindowDec    = [bool]$ChkWinDec.Checked
-        MaxSim       = [int]$NumSim.Value
-        DlFolder     = $TxtDl.Text.Trim()
-        StartMin     = [bool]$ChkMin.Checked
-        MinToTray    = [bool]$ChkTray.Checked
-        CloseToTray  = [bool]$ChkCloseTray.Checked
-        PatchExe     = [bool]$ChkExe.Checked
-        AutoUpdate   = [bool]$ChkUpdate.Checked
-        ForceMinimal = [bool]$ChkMinLay.Checked
-        PauseSpeed   = [int]$NumPause.Value
+        Mode            = $mode
+        InstallSource   = $src
+        InstallPath     = $TxtPath.Text.Trim()
+        ThemeName       = $CboTheme.Text
+        GuiThemeName    = $CboGuiTheme.Text
+        LanguageCode    = $CboLang.Text
+        IconPack        = $CboIcons.Text
+        WindowDec       = [bool]$ChkWinDec.Checked
+        MaxSim          = [int]$NumSim.Value
+        DlFolder        = $TxtDl.Text.Trim()
+        StartMin        = [bool]$ChkMin.Checked
+        MinToTray       = [bool]$ChkTray.Checked
+        CloseToTray     = [bool]$ChkCloseTray.Checked
+        PatchExe        = [bool]$ChkExe.Checked
+        AutoUpdate      = [bool]$ChkUpdate.Checked
+        ForceMinimal    = [bool]$ChkMinLay.Checked
+        PauseSpeed      = [int]$NumPause.Value
+        MaxChunks       = [int]$NumChunks.Value
+        MaxPerHost      = [int]$NumPerHost.Value
+        HashCheck       = [bool]$ChkHashCheck.Checked
+        PreserveFileDate= [bool]$ChkPreserveDate.Checked
+        ClipboardMonitor= [bool]$ChkClipboard.Checked
+        DisableLocalAPI = [bool]$ChkDisableAPI.Checked
+        WriteVmOptions  = [bool]$ChkVmOptions.Checked
     }
 }
 
@@ -1722,23 +1892,30 @@ function Get-NormalizedStateObject {
     if ([string]::IsNullOrWhiteSpace($languageCode)) { $languageCode = $CurrentLangCode }
 
     return [ordered]@{
-        Mode         = $mode
-        InstallSource= $installSource
-        InstallPath  = ([string]$State.InstallPath).Trim()
-        ThemeName    = [string]$State.ThemeName
-        GuiThemeName = [string]$State.GuiThemeName
-        LanguageCode = $languageCode
-        IconPack     = [string]$State.IconPack
-        WindowDec    = [bool]$State.WindowDec
-        MaxSim       = [int]$State.MaxSim
-        DlFolder     = ([string]$State.DlFolder).Trim()
-        StartMin     = [bool]$State.StartMin
-        MinToTray    = [bool]$State.MinToTray
-        CloseToTray  = [bool]$State.CloseToTray
-        PatchExe     = [bool]$State.PatchExe
-        AutoUpdate   = [bool]$State.AutoUpdate
-        ForceMinimal = [bool]$State.ForceMinimal
-        PauseSpeed   = [int]$State.PauseSpeed
+        Mode            = $mode
+        InstallSource   = $installSource
+        InstallPath     = ([string]$State.InstallPath).Trim()
+        ThemeName       = [string]$State.ThemeName
+        GuiThemeName    = [string]$State.GuiThemeName
+        LanguageCode    = $languageCode
+        IconPack        = [string]$State.IconPack
+        WindowDec       = [bool]$State.WindowDec
+        MaxSim          = [int]$State.MaxSim
+        DlFolder        = ([string]$State.DlFolder).Trim()
+        StartMin        = [bool]$State.StartMin
+        MinToTray       = [bool]$State.MinToTray
+        CloseToTray     = [bool]$State.CloseToTray
+        PatchExe        = [bool]$State.PatchExe
+        AutoUpdate      = [bool]$State.AutoUpdate
+        ForceMinimal    = [bool]$State.ForceMinimal
+        PauseSpeed      = [int]$State.PauseSpeed
+        MaxChunks       = if ($State.PSObject.Properties.Name -contains "MaxChunks") { [int]$State.MaxChunks } else { 1 }
+        MaxPerHost      = if ($State.PSObject.Properties.Name -contains "MaxPerHost") { [int]$State.MaxPerHost } else { 1 }
+        HashCheck       = if ($State.PSObject.Properties.Name -contains "HashCheck") { [bool]$State.HashCheck } else { $true }
+        PreserveFileDate= if ($State.PSObject.Properties.Name -contains "PreserveFileDate") { [bool]$State.PreserveFileDate } else { $false }
+        ClipboardMonitor= if ($State.PSObject.Properties.Name -contains "ClipboardMonitor") { [bool]$State.ClipboardMonitor } else { $true }
+        DisableLocalAPI = if ($State.PSObject.Properties.Name -contains "DisableLocalAPI") { [bool]$State.DisableLocalAPI } else { $true }
+        WriteVmOptions  = if ($State.PSObject.Properties.Name -contains "WriteVmOptions") { [bool]$State.WriteVmOptions } else { $false }
     }
 }
 
@@ -1765,8 +1942,8 @@ function Get-ChangedWorkspaceAreas {
     $areaMap = [ordered]@{
         "installation setup"   = @("Mode", "InstallSource", "InstallPath")
         "appearance"           = @("ThemeName", "IconPack", "WindowDec", "ForceMinimal")
-        "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray")
-        "hardening"            = @("PatchExe", "AutoUpdate")
+        "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray", "MaxChunks", "MaxPerHost", "HashCheck", "PreserveFileDate", "ClipboardMonitor")
+        "hardening"            = @("PatchExe", "AutoUpdate", "DisableLocalAPI", "WriteVmOptions")
         "workspace preferences"= @("GuiThemeName", "LanguageCode")
     }
 
@@ -1884,8 +2061,15 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $ChkTray      -Name "Minimize to tray" -Description "Send JDownloader to the system tray when minimized." -TabIndex 1
     Set-ControlMetadata -Control $ChkCloseTray -Name "Close to tray" -Description "Send JDownloader to the system tray when the close button is used." -TabIndex 2
 
+    Set-ControlMetadata -Control $NumChunks     -Name "Chunks per file" -Description "Number of parallel segments per download. Increase for premium hosts." -TabIndex 3
+    Set-ControlMetadata -Control $NumPerHost    -Name "Per-host download limit" -Description "Max simultaneous downloads from any single host." -TabIndex 4
+    Set-ControlMetadata -Control $ChkHashCheck  -Name "Hash check" -Description "Verify file integrity after download completes." -TabIndex 5
+    Set-ControlMetadata -Control $ChkPreserveDate -Name "Preserve file dates" -Description "Keep the original file modification timestamp from the server." -TabIndex 6
+    Set-ControlMetadata -Control $ChkClipboard  -Name "Clipboard monitoring" -Description "Automatically detect download links copied to clipboard." -TabIndex 7
     Set-ControlMetadata -Control $ChkExe       -Name "Apply dark executable icon" -Description "Replace the executable icon with the darker icon variant." -TabIndex 0
     Set-ControlMetadata -Control $ChkUpdate    -Name "Run update after completion" -Description "Launch JDownloader's update routine after the selected work finishes." -TabIndex 1
+    Set-ControlMetadata -Control $ChkDisableAPI -Name "Disable deprecated local API" -Description "Block the legacy unauthenticated REST API on port 3128." -TabIndex 2
+    Set-ControlMetadata -Control $ChkVmOptions  -Name "Write JVM options file" -Description "Create JDownloader2.vmoptions with performance flags." -TabIndex 3
 
     Set-ControlMetadata -Control $RepairResetCfg.Button   -Name "Reset configuration" -Description "Back up and remove the full configuration folder." -TabIndex 0
     Set-ControlMetadata -Control $RepairResetTheme.Button -Name "Reset theme assets" -Description "Remove the current theme override files and icon assets." -TabIndex 0
@@ -2072,6 +2256,22 @@ $ChkTray = New-CheckBox -Parent $BehTray -LangKey "MinToTray" -Location (New-Obj
 $ChkCloseTray = New-CheckBox -Parent $BehTray -LangKey "CloseToTray" -Location (New-Object System.Drawing.Point(24, 182)) -Checked $true
 [void](New-Label -Parent $BehTray -Text "Recommended: keep tray behavior enabled if JDownloader runs in the background most of the time." -Location (New-Object System.Drawing.Point(24, 232)) -Size (New-Object System.Drawing.Size(320, 50)) -AutoSize $false -Tag "BodyMuted")
 
+# --- Advanced download tuning ---
+$BehAdvanced = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(0, 548)) -Size (New-Object System.Drawing.Size(640, 168))
+[void](New-Label -Parent $BehAdvanced -Text "Advanced download tuning" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $BehAdvanced -Text "Chunks per file" -Location (New-Object System.Drawing.Point(24, 68)))
+$NumChunks = New-NumericUpDown -Parent $BehAdvanced -Location (New-Object System.Drawing.Point(412, 64)) -Min 1 -Max 20 -Value 1 -Tag "Input"
+[void](New-Label -Parent $BehAdvanced -Text "Split downloads into segments. Higher values can improve speed on premium hosts." -Location (New-Object System.Drawing.Point(24, 94)) -Size (New-Object System.Drawing.Size(520, 24)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $BehAdvanced -Text "Per-host limit" -Location (New-Object System.Drawing.Point(24, 128)))
+$NumPerHost = New-NumericUpDown -Parent $BehAdvanced -Location (New-Object System.Drawing.Point(412, 124)) -Min 1 -Max 20 -Value 1 -Tag "Input"
+[void](New-Label -Parent $BehAdvanced -Text "Max simultaneous downloads from any single host. Increase for premium accounts." -Location (New-Object System.Drawing.Point(24, 150)) -Size (New-Object System.Drawing.Size(520, 18)) -AutoSize $false -Tag "BodyMuted")
+
+$BehFileOpts = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(662, 548)) -Size (New-Object System.Drawing.Size(378, 168)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $BehFileOpts -Text "File handling" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+$ChkHashCheck = New-CheckBox -Parent $BehFileOpts -Text "Verify file integrity (hash check)" -Location (New-Object System.Drawing.Point(24, 68)) -Checked $true
+$ChkPreserveDate = New-CheckBox -Parent $BehFileOpts -Text "Preserve original file dates" -Location (New-Object System.Drawing.Point(24, 100))
+$ChkClipboard = New-CheckBox -Parent $BehFileOpts -Text "Monitor clipboard for download links" -Location (New-Object System.Drawing.Point(24, 132)) -Checked $true
+
 # --- Hardening Page ---
 $HardHero = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 156))
 $HardTitle = New-Label -Parent $HardHero -LangKey "HardTitle" -Location (New-Object System.Drawing.Point(24, 24)) -Tag "SectionHeader"
@@ -2091,12 +2291,25 @@ $HardAlways = New-Surface -Parent $HardeningCanvas -Location (New-Object System.
 [void](New-Label -Parent $HardAlways -Text "Always applied cleanup" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
 [void](New-Label -Parent $HardAlways -Text "Contribute panel" -Location (New-Object System.Drawing.Point(24, 74)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
 [void](New-Label -Parent $HardAlways -Text "Promotional banners" -Location (New-Object System.Drawing.Point(24, 106)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
-[void](New-Label -Parent $HardAlways -Text "Premium and MyJD prompts" -Location (New-Object System.Drawing.Point(24, 138)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
-[void](New-Label -Parent $HardAlways -Text "These are disabled by default so the final interface feels calmer and less cluttered." -Location (New-Object System.Drawing.Point(24, 174)) -Size (New-Object System.Drawing.Size(320, 32)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $HardAlways -Text "Premium upsell columns + alerts" -Location (New-Object System.Drawing.Point(24, 138)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+[void](New-Label -Parent $HardAlways -Text "Special deals, donate button, captcha ads" -Location (New-Object System.Drawing.Point(24, 170)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+[void](New-Label -Parent $HardAlways -Text "Bubble notifications disabled" -Location (New-Object System.Drawing.Point(24, 202)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
 
-$HardNoteSurface = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 432)) -Size (New-Object System.Drawing.Size(1040, 144))
-[void](New-Label -Parent $HardNoteSurface -Text "Result" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
-$HardNote = New-Label -Parent $HardNoteSurface -LangKey "HardNote" -Location (New-Object System.Drawing.Point(24, 56)) -Size (New-Object System.Drawing.Size(972, 56)) -AutoSize $false -Tag "BodyMuted"
+# --- Privacy & Security ---
+$HardPrivacy = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 432)) -Size (New-Object System.Drawing.Size(640, 200))
+[void](New-Label -Parent $HardPrivacy -Text "Privacy and security" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $HardPrivacy -Text "Control network exposure, local APIs, and JVM performance flags." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(568, 24)) -AutoSize $false -Tag "BodyMuted")
+$ChkDisableAPI = New-CheckBox -Parent $HardPrivacy -Text "Disable deprecated local API (port 3128)" -Location (New-Object System.Drawing.Point(24, 84)) -Checked $true
+[void](New-Label -Parent $HardPrivacy -Text "Blocks the legacy unauthenticated REST API that listens on localhost." -Location (New-Object System.Drawing.Point(48, 110)) -Size (New-Object System.Drawing.Size(544, 24)) -AutoSize $false -Tag "BodyMuted")
+$ChkVmOptions = New-CheckBox -Parent $HardPrivacy -Text "Write JVM performance options file" -Location (New-Object System.Drawing.Point(24, 144))
+[void](New-Label -Parent $HardPrivacy -Text "Creates JDownloader2.vmoptions with tuned flags. Skipped if the file already exists." -Location (New-Object System.Drawing.Point(48, 170)) -Size (New-Object System.Drawing.Size(544, 24)) -AutoSize $false -Tag "BodyMuted")
+
+$HardNoteSurface = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(662, 432)) -Size (New-Object System.Drawing.Size(378, 200)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $HardNoteSurface -Text "What gets removed" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+$HardNote = New-Label -Parent $HardNoteSurface -LangKey "HardNote" -Location (New-Object System.Drawing.Point(24, 56)) -Size (New-Object System.Drawing.Size(330, 120)) -AutoSize $false -Tag "BodyMuted"
+
+$HardResultSurface = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 656)) -Size (New-Object System.Drawing.Size(1040, 100))
+[void](New-Label -Parent $HardResultSurface -Text "This pass writes debloat flags across 8 config files, replaces banner images with blank PNGs, and optionally hardens the local API and JVM settings." -Location (New-Object System.Drawing.Point(24, 22)) -Size (New-Object System.Drawing.Size(992, 56)) -AutoSize $false -Tag "BodyMuted")
 
 function Update-HardeningProfile {
     if (-not $HardResultBadge -or -not $HardResultDetail -or -not $ChkExe -or -not $ChkUpdate) { return }
@@ -2386,13 +2599,18 @@ function Show-ConfirmationDialog {
     [void](New-Label -Parent $optionsPanel -Text $changeScopeText -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(604, 38)) -AutoSize $false -Tag "BodyMuted")
 
     $KeyMap = [ordered]@{
-        "WindowDec"    = "Enable custom window decorations"
-        "ForceMinimal" = "Use compact tab layout"
-        "StartMin"     = "Start minimized"
-        "MinToTray"    = "Minimize to tray"
-        "CloseToTray"  = "Close button sends JDownloader to tray"
-        "PatchExe"     = "Apply dark executable icon"
-        "AutoUpdate"   = "Run update after completion"
+        "WindowDec"      = "Enable custom window decorations"
+        "ForceMinimal"   = "Use compact tab layout"
+        "StartMin"       = "Start minimized"
+        "MinToTray"      = "Minimize to tray"
+        "CloseToTray"    = "Close button sends JDownloader to tray"
+        "HashCheck"      = "Verify file integrity after download"
+        "PreserveFileDate"= "Preserve original file dates"
+        "ClipboardMonitor"= "Monitor clipboard for download links"
+        "PatchExe"       = "Apply dark executable icon"
+        "AutoUpdate"     = "Run update after completion"
+        "DisableLocalAPI"= "Disable legacy local API (port 3128)"
+        "WriteVmOptions" = "Write JVM performance options file"
     }
     $ResultRefs = @{}
     [int]$optY = 104
@@ -2432,6 +2650,11 @@ function Show-ConfirmationDialog {
         if($ResultRefs["CloseToTray"]) { $ChkCloseTray.Checked = $ResultRefs["CloseToTray"].Checked }
         if($ResultRefs["PatchExe"]) { $ChkExe.Checked = $ResultRefs["PatchExe"].Checked }
         if($ResultRefs["AutoUpdate"]) { $ChkUpdate.Checked = $ResultRefs["AutoUpdate"].Checked }
+        if($ResultRefs["HashCheck"]) { $ChkHashCheck.Checked = $ResultRefs["HashCheck"].Checked }
+        if($ResultRefs["PreserveFileDate"]) { $ChkPreserveDate.Checked = $ResultRefs["PreserveFileDate"].Checked }
+        if($ResultRefs["ClipboardMonitor"]) { $ChkClipboard.Checked = $ResultRefs["ClipboardMonitor"].Checked }
+        if($ResultRefs["DisableLocalAPI"]) { $ChkDisableAPI.Checked = $ResultRefs["DisableLocalAPI"].Checked }
+        if($ResultRefs["WriteVmOptions"]) { $ChkVmOptions.Checked = $ResultRefs["WriteVmOptions"].Checked }
         
         return $true
     }
@@ -2542,6 +2765,13 @@ $ChkTray.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
 $ChkCloseTray.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
 $ChkExe.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
 $ChkUpdate.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
+$NumChunks.Add_ValueChanged({ Update-BehaviorProfile; Update-WorkspaceState })
+$NumPerHost.Add_ValueChanged({ Update-BehaviorProfile; Update-WorkspaceState })
+$ChkHashCheck.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
+$ChkPreserveDate.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
+$ChkClipboard.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
+$ChkDisableAPI.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
+$ChkVmOptions.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
 $BtnRestoreWorkspace.Add_Click({
     if (-not $script:SavedWorkspaceState) { return }
     $shouldRestore = Show-ActionPrompt -Title "Restore last successful run" -Message "This replaces the current selections with the workspace that was last applied successfully." -ConfirmText "Restore selections" -ConfirmTag "PrimaryButton"
@@ -2575,7 +2805,14 @@ $ToolTip.SetToolTip($CboTheme, "Pick the JDownloader look and feel that should b
 $ToolTip.SetToolTip($CboIcons, "Icon packs can be changed independently from the theme preset.")
 $ToolTip.SetToolTip($ChkWinDec, "Turns on custom window decorations when the theme supports them.")
 $ToolTip.SetToolTip($ChkMinLay, "Tightens the main JDownloader tabs for a cleaner, lower-noise shell.")
+$ToolTip.SetToolTip($NumChunks, "Split downloads into parallel segments. Higher values help on premium hosts. Default: 1.")
+$ToolTip.SetToolTip($NumPerHost, "Max concurrent downloads from any single host. Useful with premium accounts.")
+$ToolTip.SetToolTip($ChkHashCheck, "Verify downloaded file integrity using checksums when available.")
+$ToolTip.SetToolTip($ChkPreserveDate, "Keep the original last-modified date from the server instead of the download date.")
+$ToolTip.SetToolTip($ChkClipboard, "Automatically detect and queue download links copied to the clipboard.")
 $ToolTip.SetToolTip($ChkExe, "Replaces the executable icon for a more cohesive dark desktop setup.")
+$ToolTip.SetToolTip($ChkDisableAPI, "Disables the legacy local REST API (port 3128) that requires no authentication.")
+$ToolTip.SetToolTip($ChkVmOptions, "Creates a JDownloader2.vmoptions file with JVM performance flags. Skipped if the file already exists.")
 
 
 $Form.Add_Load({
