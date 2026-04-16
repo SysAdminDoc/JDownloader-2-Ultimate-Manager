@@ -1385,7 +1385,7 @@ $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.A
 $PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
 $PageBehavior     = New-PagePanel -CanvasHeight 560; [void]$MainPanel.Controls.Add($PageBehavior)
 $PageHardening    = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageHardening)
-$PageRepair       = New-PagePanel -CanvasHeight 740; [void]$MainPanel.Controls.Add($PageRepair)
+$PageRepair       = New-PagePanel -CanvasHeight 572; [void]$MainPanel.Controls.Add($PageRepair)
 
 $DashboardCanvas = Get-PageCanvas $PageDashboard
 $InstallationCanvas = Get-PageCanvas $PageInstallation
@@ -2029,12 +2029,13 @@ $ChkCloseTray = New-CheckBox -Parent $BehTray -LangKey "CloseToTray" -Location (
 # --- Hardening Page ---
 $HardHero = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 156))
 $HardTitle = New-Label -Parent $HardHero -LangKey "HardTitle" -Location (New-Object System.Drawing.Point(24, 24)) -Tag "SectionHeader"
-$HardSub = New-Label -Parent $HardHero -LangKey "HardSub" -Location (New-Object System.Drawing.Point(24, 60)) -Size (New-Object System.Drawing.Size(650, 40)) -AutoSize $false -Tag "SubHeader"
+$HardSub = New-Label -Parent $HardHero -LangKey "HardSub" -Location (New-Object System.Drawing.Point(24, 60)) -Size (New-Object System.Drawing.Size(690, 40)) -AutoSize $false -Tag "SubHeader"
 $HardResultBadge = New-Badge -Parent $HardHero -Text "Cleaner shell by default" -Location (New-Object System.Drawing.Point(780, 28)) -Size (New-Object System.Drawing.Size(188, 28)) -Tag "BadgeAccent"
 $HardResultDetail = New-Label -Parent $HardHero -Text "This pass removes promotional noise first, then lets you opt into the finishing touches that fit your desktop." -Location (New-Object System.Drawing.Point(780, 64)) -Size (New-Object System.Drawing.Size(214, 68)) -AutoSize $false -Tag "BodyMuted"
 
 $HardControls = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 180)) -Size (New-Object System.Drawing.Size(640, 228))
 [void](New-Label -Parent $HardControls -Text "Optional finishing passes" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $HardControls -Text "These are off by default if you want a lighter-touch run. Enable whichever touches fit your setup." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(568, 24)) -AutoSize $false -Tag "BodyMuted")
 $ChkExe = New-CheckBox -Parent $HardControls -LangKey "DarkExe" -Location (New-Object System.Drawing.Point(24, 84)) -Checked $true
 [void](New-Label -Parent $HardControls -Text "Replaces the executable icon so the shell looks more at home with darker setups." -Location (New-Object System.Drawing.Point(48, 110)) -Size (New-Object System.Drawing.Size(544, 32)) -AutoSize $false -Tag "BodyMuted")
 $ChkUpdate = New-CheckBox -Parent $HardControls -LangKey "RunUpdate" -Location (New-Object System.Drawing.Point(24, 156)) -Checked $true
@@ -2079,16 +2080,16 @@ function Update-HardeningProfile {
 # --- Repair Page ---
 $RepairHero = New-Surface -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 160))
 $RepTitle = New-Label -Parent $RepairHero -LangKey "RepTitle" -Location (New-Object System.Drawing.Point(24, 24)) -Tag "SectionHeader"
-$RepSub = New-Label -Parent $RepairHero -LangKey "RepSub" -Location (New-Object System.Drawing.Point(24, 60)) -Size (New-Object System.Drawing.Size(650, 40)) -AutoSize $false -Tag "SubHeader"
-[void](New-Badge -Parent $RepairHero -Text "Confirmation required" -Location (New-Object System.Drawing.Point(760, 28)) -Size (New-Object System.Drawing.Size(196, 28)) -Tag "BadgeWarning")
-[void](New-Label -Parent $RepairHero -Text "Most actions below stop JDownloader first. Destructive actions ask for confirmation before they continue." -Location (New-Object System.Drawing.Point(760, 64)) -Size (New-Object System.Drawing.Size(236, 52)) -AutoSize $false -Tag "BodyMuted")
+$RepSub = New-Label -Parent $RepairHero -LangKey "RepSub" -Location (New-Object System.Drawing.Point(24, 60)) -Size (New-Object System.Drawing.Size(690, 40)) -AutoSize $false -Tag "SubHeader"
+[void](New-Badge -Parent $RepairHero -Text "Confirmation required" -Location (New-Object System.Drawing.Point(780, 28)) -Size (New-Object System.Drawing.Size(196, 28)) -Tag "BadgeWarning")
+[void](New-Label -Parent $RepairHero -Text "Most actions below stop JDownloader first. Destructive actions ask for confirmation before they continue." -Location (New-Object System.Drawing.Point(780, 64)) -Size (New-Object System.Drawing.Size(220, 68)) -AutoSize $false -Tag "BodyMuted")
 
 function Show-ActionPrompt {
     param([string]$Title, [string]$Message, [string]$ConfirmText = "Continue", [string]$ConfirmTag = "PrimaryButton")
     $pal = Get-ActivePalette
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text = $Title
-    $dlg.Size = New-Object System.Drawing.Size(520, 280)
+    $dlg.Size = New-Object System.Drawing.Size(520, 296)
     $dlg.MinimumSize = $dlg.Size
     $dlg.StartPosition = "CenterParent"
     $dlg.FormBorderStyle = "FixedDialog"
@@ -2303,7 +2304,7 @@ function Show-ConfirmationDialog {
     }
     $cForm = New-Object System.Windows.Forms.Form
     $cForm.Text = "Confirm changes"
-    $cForm.Size = New-Object System.Drawing.Size(700, 664)
+    $cForm.Size = New-Object System.Drawing.Size(700, 688)
     $cForm.MinimumSize = $cForm.Size
     $cForm.StartPosition = "CenterParent"
     $cForm.FormBorderStyle = "FixedDialog"
