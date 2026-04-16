@@ -33,6 +33,17 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class NativeGuiApi {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+}
+'@ -ErrorAction Stop
+} catch {}
 
 # Force High DPI Awareness correctly
 try {
@@ -80,6 +91,12 @@ $LanguageRegistry = @()
 $GlobalJobs = @{}
 $GlobalTimers = @()
 $ThemeImageCache = @{}
+$script:CurrentGuiTheme = "Dark (Default)"
+$script:LastStatusText = "Ready"
+$script:LastStatusType = "INFO"
+$script:InitialWorkspaceState = $null
+$script:SavedWorkspaceState = $null
+$script:IsBootstrapping = $true
 
 # ==========================================
 # 3. LANGUAGE & GUI THEME ENGINE
@@ -91,6 +108,17 @@ $DefaultLang = [ordered]@{
     "Dashboard" = "Dashboard"; "Installation" = "Installation"; "Themes" = "Themes"; 
     "Behavior" = "Behavior"; "Hardening" = "Hardening"; "Repair" = "Repair Tools";
     "Execute" = "EXECUTE ALL OPERATIONS"; "Status" = "Status: Ready";
+    "Running" = "Applying changes...";
+    "FooterSummary" = "Apply every selected change in a single, predictable run.";
+    "RunFinishedTitle" = "Run finished";
+    "RunFinishedBody" = "Selected operations completed. Review the status area for the final result.";
+    "PathRequiredTitle" = "Path required";
+    "PathRequiredBody" = "Choose a JDownloader folder first.";
+    "InstallRequiredTitle" = "Installation required";
+    "InstallRequiredBody" = "Point the tool at a valid JDownloader installation first.";
+    "Cancel" = "Cancel";
+    "Back" = "Back";
+    "ApplySelected" = "Apply selected changes";
     "DashTitle" = "JDownloader 2 Ultimate Manager";
     "DashSub" = "One panel to install, theme, debloat, harden and repair JDownloader 2.";
     "DashHint" = "Tip: Select options from the sidebar, then click 'Execute All Operations' below.";
@@ -183,6 +211,15 @@ function Apply-LanguageData {
     }
 }
 
+function Get-LangValue {
+    param([string]$Key, [string]$Fallback = "")
+    if ($Lang -and $Lang.Contains($Key)) {
+        $value = [string]$Lang[$Key]
+        if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+    }
+    return $Fallback
+}
+
 function Register-LangControl {
     param($Control, $Key)
     if (-not $Key) { return }
@@ -198,40 +235,84 @@ Load-Language
 # --- GUI Color Themes ---
 $GuiThemes = @{
     "Dark (Default)" = @{
-        FormBack = [System.Drawing.Color]::FromArgb(30,30,30)
-        Fore     = [System.Drawing.Color]::White
-        Sidebar  = [System.Drawing.Color]::FromArgb(22,22,22)
-        Main     = [System.Drawing.Color]::FromArgb(28,28,28)
-        Footer   = [System.Drawing.Color]::FromArgb(22,22,22)
-        BtnBack  = [System.Drawing.Color]::FromArgb(40,40,40)
-        Accent   = [System.Drawing.Color]::FromArgb(30,144,255)
+        FormBack   = [System.Drawing.Color]::FromArgb(13,18,28)
+        Fore       = [System.Drawing.Color]::FromArgb(244,247,252)
+        Sidebar    = [System.Drawing.Color]::FromArgb(10,14,22)
+        SidebarAlt = [System.Drawing.Color]::FromArgb(18,24,36)
+        Main       = [System.Drawing.Color]::FromArgb(17,22,34)
+        Surface    = [System.Drawing.Color]::FromArgb(22,29,43)
+        SurfaceAlt = [System.Drawing.Color]::FromArgb(27,35,51)
+        Footer     = [System.Drawing.Color]::FromArgb(10,14,22)
+        BtnBack    = [System.Drawing.Color]::FromArgb(32,40,56)
+        InputBack  = [System.Drawing.Color]::FromArgb(15,20,30)
+        Border     = [System.Drawing.Color]::FromArgb(45,58,81)
+        Accent     = [System.Drawing.Color]::FromArgb(96,165,250)
+        AccentSoft = [System.Drawing.Color]::FromArgb(34,58,94)
+        Muted      = [System.Drawing.Color]::FromArgb(154,167,191)
+        MutedStrong= [System.Drawing.Color]::FromArgb(191,203,224)
+        Success    = [System.Drawing.Color]::FromArgb(74,222,128)
+        Warning    = [System.Drawing.Color]::FromArgb(250,204,21)
+        Danger     = [System.Drawing.Color]::FromArgb(248,113,113)
     }
     "Light" = @{
-        FormBack = [System.Drawing.Color]::FromArgb(240,240,240)
-        Fore     = [System.Drawing.Color]::Black
-        Sidebar  = [System.Drawing.Color]::FromArgb(220,220,220)
-        Main     = [System.Drawing.Color]::White
-        Footer   = [System.Drawing.Color]::FromArgb(220,220,220)
-        BtnBack  = [System.Drawing.Color]::FromArgb(200,200,200)
-        Accent   = [System.Drawing.Color]::FromArgb(0,120,215)
+        FormBack   = [System.Drawing.Color]::FromArgb(245,247,251)
+        Fore       = [System.Drawing.Color]::FromArgb(24,31,45)
+        Sidebar    = [System.Drawing.Color]::FromArgb(234,239,246)
+        SidebarAlt = [System.Drawing.Color]::FromArgb(248,250,253)
+        Main       = [System.Drawing.Color]::FromArgb(245,247,251)
+        Surface    = [System.Drawing.Color]::FromArgb(255,255,255)
+        SurfaceAlt = [System.Drawing.Color]::FromArgb(240,244,250)
+        Footer     = [System.Drawing.Color]::FromArgb(234,239,246)
+        BtnBack    = [System.Drawing.Color]::FromArgb(232,237,244)
+        InputBack  = [System.Drawing.Color]::FromArgb(255,255,255)
+        Border     = [System.Drawing.Color]::FromArgb(206,215,228)
+        Accent     = [System.Drawing.Color]::FromArgb(37,99,235)
+        AccentSoft = [System.Drawing.Color]::FromArgb(219,234,254)
+        Muted      = [System.Drawing.Color]::FromArgb(79,92,115)
+        MutedStrong= [System.Drawing.Color]::FromArgb(52,64,86)
+        Success    = [System.Drawing.Color]::FromArgb(22,163,74)
+        Warning    = [System.Drawing.Color]::FromArgb(202,138,4)
+        Danger     = [System.Drawing.Color]::FromArgb(220,38,38)
     }
     "Midnight" = @{
-        FormBack = [System.Drawing.Color]::FromArgb(10,10,15)
-        Fore     = [System.Drawing.Color]::FromArgb(200,200,255)
-        Sidebar  = [System.Drawing.Color]::FromArgb(5,5,10)
-        Main     = [System.Drawing.Color]::FromArgb(15,15,25)
-        Footer   = [System.Drawing.Color]::FromArgb(5,5,10)
-        BtnBack  = [System.Drawing.Color]::FromArgb(25,25,45)
-        Accent   = [System.Drawing.Color]::FromArgb(100,50,200)
+        FormBack   = [System.Drawing.Color]::FromArgb(8,11,20)
+        Fore       = [System.Drawing.Color]::FromArgb(228,236,255)
+        Sidebar    = [System.Drawing.Color]::FromArgb(6,8,15)
+        SidebarAlt = [System.Drawing.Color]::FromArgb(16,21,38)
+        Main       = [System.Drawing.Color]::FromArgb(11,15,28)
+        Surface    = [System.Drawing.Color]::FromArgb(17,23,40)
+        SurfaceAlt = [System.Drawing.Color]::FromArgb(24,31,54)
+        Footer     = [System.Drawing.Color]::FromArgb(6,8,15)
+        BtnBack    = [System.Drawing.Color]::FromArgb(28,36,60)
+        InputBack  = [System.Drawing.Color]::FromArgb(12,16,29)
+        Border     = [System.Drawing.Color]::FromArgb(47,61,95)
+        Accent     = [System.Drawing.Color]::FromArgb(129,140,248)
+        AccentSoft = [System.Drawing.Color]::FromArgb(38,46,84)
+        Muted      = [System.Drawing.Color]::FromArgb(157,171,210)
+        MutedStrong= [System.Drawing.Color]::FromArgb(207,218,245)
+        Success    = [System.Drawing.Color]::FromArgb(74,222,128)
+        Warning    = [System.Drawing.Color]::FromArgb(251,191,36)
+        Danger     = [System.Drawing.Color]::FromArgb(248,113,113)
     }
     "Catppuccin Mocha" = @{
-        FormBack = [System.Drawing.Color]::FromArgb(30,30,46) # Base
-        Fore     = [System.Drawing.Color]::FromArgb(205,214,244) # Text
-        Sidebar  = [System.Drawing.Color]::FromArgb(24,24,37) # Mantle
-        Main     = [System.Drawing.Color]::FromArgb(30,30,46) # Base
-        Footer   = [System.Drawing.Color]::FromArgb(24,24,37) # Mantle
-        BtnBack  = [System.Drawing.Color]::FromArgb(69,71,90) # Surface1
-        Accent   = [System.Drawing.Color]::FromArgb(137,180,250) # Blue
+        FormBack   = [System.Drawing.Color]::FromArgb(30,30,46)
+        Fore       = [System.Drawing.Color]::FromArgb(205,214,244)
+        Sidebar    = [System.Drawing.Color]::FromArgb(24,24,37)
+        SidebarAlt = [System.Drawing.Color]::FromArgb(49,50,68)
+        Main       = [System.Drawing.Color]::FromArgb(30,30,46)
+        Surface    = [System.Drawing.Color]::FromArgb(49,50,68)
+        SurfaceAlt = [System.Drawing.Color]::FromArgb(69,71,90)
+        Footer     = [System.Drawing.Color]::FromArgb(24,24,37)
+        BtnBack    = [System.Drawing.Color]::FromArgb(88,91,112)
+        InputBack  = [System.Drawing.Color]::FromArgb(36,39,58)
+        Border     = [System.Drawing.Color]::FromArgb(108,112,134)
+        Accent     = [System.Drawing.Color]::FromArgb(137,180,250)
+        AccentSoft = [System.Drawing.Color]::FromArgb(53,68,100)
+        Muted      = [System.Drawing.Color]::FromArgb(166,173,200)
+        MutedStrong= [System.Drawing.Color]::FromArgb(198,208,245)
+        Success    = [System.Drawing.Color]::FromArgb(166,227,161)
+        Warning    = [System.Drawing.Color]::FromArgb(249,226,175)
+        Danger     = [System.Drawing.Color]::FromArgb(243,139,168)
     }
 }
 
@@ -294,10 +375,11 @@ function Log-Status {
     $msg = "[$timestamp] [$Type] $Text"
     # Try/Catch wrap for logging
     try { Add-Content -Path $LogFile -Value $msg -ErrorAction SilentlyContinue } catch {}
-    
-    if ($StatusLabel -and $StatusLabel.IsHandleCreated) {
-        $StatusLabel.Invoke([Action[string]]{ param($t) $StatusLabel.Text = $t }, "Status: $Text")
-    }
+
+    $script:LastStatusText = $Text
+    $script:LastStatusType = $Type
+
+    try { Update-StatusVisual -Text $Text -Type $Type } catch {}
 }
 
 function Save-Settings {
@@ -407,10 +489,17 @@ function Start-ThemeImagePreload {
                 foreach ($k in $res.Keys) {
                     if ($res[$k]) {
                         $ms = New-Object System.IO.MemoryStream(,$res[$k])
-                        # Cache raw stream or image - keep stream open or use FromStream validation
-                        $img = [System.Drawing.Image]::FromStream($ms)
-                        if ($script:ThemeImageCache.ContainsKey($k)) { $script:ThemeImageCache[$k].Dispose() }
-                        $script:ThemeImageCache[$k] = $img
+                        $img = $null
+                        $cacheImg = $null
+                        try {
+                            $img = [System.Drawing.Image]::FromStream($ms)
+                            $cacheImg = New-Object System.Drawing.Bitmap($img)
+                            if ($script:ThemeImageCache.ContainsKey($k)) { $script:ThemeImageCache[$k].Dispose() }
+                            $script:ThemeImageCache[$k] = $cacheImg
+                        } finally {
+                            if ($img) { $img.Dispose() }
+                            $ms.Dispose()
+                        }
                     }
                 }
                 Log-Status "Theme previews loaded." "SUCCESS"
@@ -436,14 +525,93 @@ function Cleanup-Resources {
     foreach ($img in $ThemeImageCache.Values) { if($img){$img.Dispose()} }
 }
 
+function Enable-DoubleBuffer {
+    param($Control)
+    if (-not $Control) { return }
+    try {
+        $prop = $Control.GetType().GetProperty("DoubleBuffered", [System.Reflection.BindingFlags]("NonPublic,Instance"))
+        if ($prop) { $prop.SetValue($Control, $true, $null) }
+    } catch {}
+}
+
+function Get-ActivePalette {
+    if ($GuiThemes.ContainsKey($script:CurrentGuiTheme)) {
+        return $GuiThemes[$script:CurrentGuiTheme]
+    }
+    return $GuiThemes["Dark (Default)"]
+}
+
+function Set-CueBanner {
+    param($Control, [string]$Text)
+    if (-not $Control -or [string]::IsNullOrWhiteSpace($Text)) { return }
+    try {
+        $null = $Control.Handle
+        [NativeGuiApi]::SendMessage($Control.Handle, 0x1501, [IntPtr]1, $Text) | Out-Null
+    } catch {}
+}
+
+function Set-ControlMetadata {
+    param($Control, [string]$Name, [string]$Description, [int]$TabIndex = -1)
+    if (-not $Control) { return }
+    if ($Name) { $Control.AccessibleName = $Name }
+    if ($Description) { $Control.AccessibleDescription = $Description }
+    if ($TabIndex -ge 0) { $Control.TabIndex = $TabIndex }
+}
+
+function Update-StatusVisual {
+    param([string]$Text, [string]$Type = "INFO")
+
+    $script:LastStatusText = $Text
+    $script:LastStatusType = $Type
+
+    if (-not $StatusLabel) { return }
+
+    $palette = Get-ActivePalette
+    $statusColor = switch ($Type.ToUpperInvariant()) {
+        "SUCCESS" { $palette.Success; break }
+        "WARN"    { $palette.Warning; break }
+        "ERROR"   { $palette.Danger; break }
+        "FATAL"   { $palette.Danger; break }
+        "DEBUG"   { $palette.Muted; break }
+        default   { $palette.MutedStrong; break }
+    }
+
+    $prefix = switch ($Type.ToUpperInvariant()) {
+        "SUCCESS" { "Done" }
+        "WARN"    { "Attention" }
+        "ERROR"   { "Error" }
+        "FATAL"   { "Critical" }
+        "DEBUG"   { "Debug" }
+        default   { "Status" }
+    }
+
+    if ($StatusLabel.IsHandleCreated) {
+        $StatusLabel.Invoke([Action[string, object, string]]{
+            param($t, $c, $pfx)
+            $StatusLabel.Text = "${pfx}: $t"
+            $StatusLabel.ForeColor = $c
+        }, $Text, $statusColor, $prefix)
+    } else {
+        $StatusLabel.Text = "${prefix}: $Text"
+        $StatusLabel.ForeColor = $statusColor
+    }
+}
+
 # Enhanced Theme Engine
 function Apply-GuiTheme {
-    param($ThemeName)
+    param($ThemeName, $Root = $Form)
     $pal = $GuiThemes[$ThemeName]
-    if (-not $pal) { return }
+    if (-not $pal) {
+        $ThemeName = "Dark (Default)"
+        $pal = $GuiThemes[$ThemeName]
+    }
 
-    $Form.BackColor = $pal.FormBack
-    $Form.ForeColor = $pal.Fore
+    $script:CurrentGuiTheme = $ThemeName
+
+    if ($Root) {
+        $Root.BackColor = $pal.FormBack
+        $Root.ForeColor = $pal.Fore
+    }
     
     function Update-Control {
         param($ctrl)
@@ -452,17 +620,26 @@ function Apply-GuiTheme {
         if ($ctrl.Tag -is [string]) {
             switch ($ctrl.Tag) {
                 "Sidebar" { $ctrl.BackColor = $pal.Sidebar; $styled=$true }
+                "SidebarAlt" { $ctrl.BackColor = $pal.SidebarAlt; $styled=$true }
                 "MainPanel" { $ctrl.BackColor = $pal.Main; $styled=$true }
                 "Footer" { $ctrl.BackColor = $pal.Footer; $styled=$true }
                 "Page" { $ctrl.BackColor = $pal.Main; $styled=$true }
-                "PreviewPanel" { $ctrl.BackColor = $pal.BtnBack; $styled=$true }
-                "PrimaryButton" { $ctrl.BackColor = $pal.Accent; $ctrl.ForeColor = "White"; $styled=$true }
-                "DangerButton" { $ctrl.BackColor = [System.Drawing.Color]::Maroon; $ctrl.ForeColor = "White"; $styled=$true }
-                "SuccessButton" { $ctrl.BackColor = [System.Drawing.Color]::SeaGreen; $ctrl.ForeColor = "White"; $styled=$true }
-                "NavButton" { $ctrl.BackColor = $pal.BtnBack; $ctrl.ForeColor = $pal.Fore; $styled=$true }
-                "Input" { $ctrl.BackColor = $pal.BtnBack; $ctrl.ForeColor = $pal.Fore; $styled=$true }
+                "Canvas" { $ctrl.BackColor = $pal.Main; $styled=$true }
+                "Surface" { $ctrl.BackColor = $pal.Surface; $styled=$true }
+                "SurfaceAlt" { $ctrl.BackColor = $pal.SurfaceAlt; $styled=$true }
+                "Callout" { $ctrl.BackColor = $pal.AccentSoft; $styled=$true }
+                "PreviewPanel" { $ctrl.BackColor = $pal.SurfaceAlt; $styled=$true }
+                "PrimaryButton" { $ctrl.BackColor = $pal.Accent; $ctrl.ForeColor = [System.Drawing.Color]::White; $styled=$true }
+                "DangerButton" { $ctrl.BackColor = $pal.Danger; $ctrl.ForeColor = [System.Drawing.Color]::White; $styled=$true }
+                "SuccessButton" { $ctrl.BackColor = $pal.Success; $ctrl.ForeColor = [System.Drawing.Color]::Black; $styled=$true }
+                "NavButton" { $ctrl.BackColor = $pal.Sidebar; $ctrl.ForeColor = $pal.MutedStrong; $styled=$true }
+                "NavButtonActive" { $ctrl.BackColor = $pal.SidebarAlt; $ctrl.ForeColor = $pal.Fore; $styled=$true }
+                "SecondaryButton" { $ctrl.BackColor = $pal.BtnBack; $ctrl.ForeColor = $pal.Fore; $styled=$true }
+                "Input" { $ctrl.BackColor = $pal.InputBack; $ctrl.ForeColor = $pal.Fore; $styled=$true }
                 "SectionHeader" { $ctrl.ForeColor = $pal.Fore; $styled=$true }
-                "SubHeader" { $ctrl.ForeColor = "LightGray"; $styled=$true }
+                "SubHeader" { $ctrl.ForeColor = $pal.MutedStrong; $styled=$true }
+                "BodyMuted" { $ctrl.ForeColor = $pal.Muted; $styled=$true }
+                "MutedStrong" { $ctrl.ForeColor = $pal.MutedStrong; $styled=$true }
             }
         }
 
@@ -472,14 +649,19 @@ function Apply-GuiTheme {
                 if ($ctrl.Name -eq "Sidebar") { $ctrl.BackColor = $pal.Sidebar }
                 elseif ($ctrl.Name -eq "MainPanel") { $ctrl.BackColor = $pal.Main }
                 elseif ($ctrl.Name -eq "Footer") { $ctrl.BackColor = $pal.Footer }
-                else { $ctrl.BackColor = $pal.Main } 
+                else { $ctrl.BackColor = $pal.Main }
             }
-            if ($ctrl -is [System.Windows.Forms.Button] -and $ctrl.Tag -ne "SidebarBtn") {
-                 $ctrl.BackColor = $pal.BtnBack
-                 $ctrl.ForeColor = $pal.Fore
+            if ($ctrl -is [System.Windows.Forms.Button]) {
+                if ($ctrl.Tag -eq "SidebarBtn") {
+                    $ctrl.BackColor = $pal.Sidebar
+                    $ctrl.ForeColor = $pal.MutedStrong
+                } else {
+                    $ctrl.BackColor = $pal.BtnBack
+                    $ctrl.ForeColor = $pal.Fore
+                }
             }
-             if ($ctrl -is [System.Windows.Forms.TextBox] -or $ctrl -is [System.Windows.Forms.NumericUpDown] -or $ctrl -is [System.Windows.Forms.ComboBox]) {
-                $ctrl.BackColor = $pal.BtnBack
+            if ($ctrl -is [System.Windows.Forms.TextBox] -or $ctrl -is [System.Windows.Forms.NumericUpDown] -or $ctrl -is [System.Windows.Forms.ComboBox]) {
+                $ctrl.BackColor = $pal.InputBack
                 $ctrl.ForeColor = $pal.Fore
                 if ($ctrl -is [System.Windows.Forms.TextBox]) { $ctrl.BorderStyle = "FixedSingle" }
             }
@@ -487,13 +669,36 @@ function Apply-GuiTheme {
                 $ctrl.ForeColor = $pal.Fore
             }
         }
+
+        if ($ctrl -is [System.Windows.Forms.Button]) {
+            $ctrl.FlatAppearance.BorderSize = 0
+            $ctrl.FlatAppearance.MouseOverBackColor = [System.Windows.Forms.ControlPaint]::Light($ctrl.BackColor, 0.08)
+            $ctrl.FlatAppearance.MouseDownBackColor = [System.Windows.Forms.ControlPaint]::Dark($ctrl.BackColor, 0.05)
+            $ctrl.Cursor = [System.Windows.Forms.Cursors]::Hand
+        }
+
+        if ($ctrl -is [System.Windows.Forms.TextBox] -or $ctrl -is [System.Windows.Forms.NumericUpDown] -or $ctrl -is [System.Windows.Forms.ComboBox]) {
+            $ctrl.BackColor = $pal.InputBack
+            $ctrl.ForeColor = $pal.Fore
+        }
+
+        if ($ctrl -is [System.Windows.Forms.LinkLabel]) {
+            $ctrl.LinkColor = $pal.Accent
+            $ctrl.ActiveLinkColor = [System.Windows.Forms.ControlPaint]::Light($pal.Accent, 0.15)
+            $ctrl.VisitedLinkColor = $pal.Accent
+            $ctrl.ForeColor = $pal.MutedStrong
+        }
         
         if ($ctrl.Controls) {
             foreach ($c in $ctrl.Controls) { Update-Control $c }
         }
     }
 
-    Update-Control $Form
+    Update-Control $Root
+    if ($Root -eq $Form) {
+        try { Update-NavigationState } catch {}
+        try { Update-StatusVisual -Text $script:LastStatusText -Type $script:LastStatusType } catch {}
+    }
 }
 
 function Detect-SystemTheme {
@@ -632,15 +837,29 @@ function Task-Install {
     if ($Source -eq "GitHub") {
         $seven = Get-7Zip
         $baseUrl = "https://github.com/SysAdminDoc/JDownloaderDarkMode/raw/main/Installer/installer.7z"
-        for ($i = 1; $i -le 7; $i++) { $part = ".{0:D3}" -f $i; Download-File -Url "$baseUrl$part" -Destination "$WorkDir\installer.7z$part" | Out-Null }
+        for ($i = 1; $i -le 7; $i++) {
+            $part = ".{0:D3}" -f $i
+            if (-not (Download-File -Url "$baseUrl$part" -Destination "$WorkDir\installer.7z$part")) {
+                Log-Status "Installer download failed on part $part." "ERROR"
+                return $false
+            }
+        }
         Start-Process $seven -ArgumentList "x `"$WorkDir\installer.7z.001`" -o`"$WorkDir\Installer`" -y" -Wait -WindowStyle Hidden
         $setup = Get-ChildItem "$WorkDir\Installer" -Filter "*.exe" -Recurse | Select-Object -First 1
-        if ($setup) { Start-Process $setup.FullName -ArgumentList "-q" -Wait; return $true }
+        if ($setup) {
+            Start-Process $setup.FullName -ArgumentList "-q" -Wait
+            return $true
+        }
+        Log-Status "Installer extraction completed, but no setup executable was found." "ERROR"
     } elseif ($Source -eq "Mega") {
         Start-Process "https://mega.nz/file/PQ0XRIrA#-uuhLXSc_nPfotXWfBWDZRx90Gnehx2_Mx_JVufzfdM"
         [System.Windows.Forms.MessageBox]::Show("Download the file from Mega, then click OK.", "Manual Download") | Out-Null
         $f = Get-ChildItem "$env:USERPROFILE\Downloads" -Filter "JDownloader*Setup*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($f) { Start-Process $f.FullName -ArgumentList "-q" -Wait; return $true }
+        if ($f) {
+            Start-Process $f.FullName -ArgumentList "-q" -Wait
+            return $true
+        }
+        Log-Status "Mega installer was not found in Downloads after the manual step." "ERROR"
     }
     return $false
 }
@@ -667,22 +886,52 @@ function Run-Audit {
 function Execute-Operations {
     param($GUI_State)
     $JDPath = $GUI_State.InstallPath
-    if ([string]::IsNullOrWhiteSpace($JDPath)) { Log-Status "Invalid path." "ERROR"; return }
+    if ($GUI_State.Mode -eq "Modify" -and [string]::IsNullOrWhiteSpace($JDPath)) {
+        Log-Status "Select an existing JDownloader folder before running modify mode." "ERROR"
+        return $false
+    }
     
     # Catch-all error trap
     try {
         if ($GUI_State.Mode -ne "Modify") {
-            if (-not (Task-Install -Source "GitHub")) { Task-Install -Source "Mega" }
+            $selectedSource = if ($GUI_State.InstallSource) { $GUI_State.InstallSource } else { "GitHub" }
+            $installSucceeded = Task-Install -Source $selectedSource
+
+            if (-not $installSucceeded -and $selectedSource -eq "GitHub") {
+                $fallback = [System.Windows.Forms.MessageBox]::Show(
+                    "GitHub install did not complete successfully. Do you want to try the manual Mega flow instead?",
+                    "Try alternate install source",
+                    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                    [System.Windows.Forms.MessageBoxIcon]::Question
+                )
+                if ($fallback -eq [System.Windows.Forms.DialogResult]::Yes) {
+                    $installSucceeded = Task-Install -Source "Mega"
+                }
+            }
+
+            if (-not $installSucceeded) {
+                Log-Status "Install step did not complete." "ERROR"
+                return $false
+            }
+
             $JDPath = Detect-JDPath
+            if (-not $JDPath) {
+                Log-Status "Install completed, but JDownloader could not be detected automatically." "WARN"
+                return $false
+            }
         }
+
+        $cfgPath = "$JDPath\cfg"
+        if (-not (Test-Path $cfgPath)) { New-Item -ItemType Directory -Path $cfgPath -Force | Out-Null }
         
+        $ProgressBar.Value = 15
         $ProgressBar.Style = "Marquee"
+        $ProgressBar.MarqueeAnimationSpeed = 28
         Kill-JDownloader; Backup-JD -InstallPath $JDPath
         
         # [Fix] Use .Contains instead of .ContainsKey for OrderedDictionary
         if ($ThemeDefinitions.Contains($GUI_State.ThemeName)) {
             $Theme = $ThemeDefinitions[$GUI_State.ThemeName]
-            $cfgPath = "$JDPath\cfg"
             $lafPath = "$cfgPath\laf"; if (-not (Test-Path $lafPath)) { New-Item -ItemType Directory -Path $lafPath -Force | Out-Null }
             
             Download-File -Url $Theme.JsonUrl -Destination "$lafPath\$($Theme.JsonName)" | Out-Null
@@ -703,7 +952,11 @@ function Execute-Operations {
         try {
             $genObj = $Template_General | ConvertFrom-Json
             $genObj.maxsimultanedownloads = [int]$GUI_State.MaxSim
-            $genObj.defaultdownloadfolder = $GUI_State.DlFolder.Replace("\", "\\")
+            if ([string]::IsNullOrWhiteSpace($GUI_State.DlFolder)) {
+                $null = $genObj.PSObject.Properties.Remove("defaultdownloadfolder")
+            } else {
+                $genObj.defaultdownloadfolder = $GUI_State.DlFolder.Replace("\", "\\")
+            }
             $genObj.pausespeed = [int]$GUI_State.PauseSpeed
             $genObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GeneralSettings.json" -Encoding UTF8
         } catch {}
@@ -721,494 +974,915 @@ function Execute-Operations {
         Task-NukeBanners -InstallPath $JDPath
         if ($GUI_State.PatchExe) { Task-PatchExeIcon -InstallPath $JDPath }
         
-        $ProgressBar.Style = "Blocks"; $ProgressBar.Value = 100
+        $ProgressBar.Style = "Continuous"; $ProgressBar.MarqueeAnimationSpeed = 0; $ProgressBar.Value = 100
         Log-Status "Operations completed." "SUCCESS"
         if ($GUI_State.AutoUpdate) { Trigger-Update -InstallPath $JDPath }
         Save-Settings -SettingsObj $GUI_State
+        return $true
     } catch {
+        $ProgressBar.Style = "Continuous"; $ProgressBar.MarqueeAnimationSpeed = 0; $ProgressBar.Value = 0
         Log-Status "CRITICAL ERROR: $_" "FATAL"
         Log-Status $($_.ScriptStackTrace) "DEBUG"
         [System.Windows.Forms.MessageBox]::Show("An error occurred during execution. check logs. `nError: $_", "Error")
+        return $false
     }
 }
 
 # ==========================================
-# 8. GUI CONSTRUCTION (Refined Layout)
+# 8. GUI CONSTRUCTION (Premium Workspace)
 # ==========================================
-
-# UI Builder Functions with proper Anchors and DPI sizing
 
 function New-Panel {
     param($Name, $Parent, $Dock, $Size, $Location, $BackColor, $Tag, $Padding, $Anchor)
     $p = New-Object System.Windows.Forms.Panel
-    if($Name){$p.Name=$Name}
-    if($Dock){$p.Dock=$Dock}
-    if($Size){$p.Size=$Size}
-    if($Location){$p.Location=$Location}
-    if($BackColor){$p.BackColor=$BackColor}
-    if($Tag){$p.Tag=$Tag}
-    if($Padding){$p.Padding=$Padding}
-    if($Anchor){$p.Anchor=$Anchor}
-    if($Parent){ [void]$Parent.Controls.Add($p) }
+    if ($Name) { $p.Name = $Name }
+    if ($Dock) { $p.Dock = $Dock }
+    if ($Size) { $p.Size = $Size }
+    if ($Location) { $p.Location = $Location }
+    if ($BackColor) { $p.BackColor = $BackColor }
+    if ($Tag) { $p.Tag = $Tag }
+    if ($Padding) { $p.Padding = $Padding }
+    if ($Anchor) { $p.Anchor = $Anchor }
+    if ($Parent) { [void]$Parent.Controls.Add($p) }
+    Enable-DoubleBuffer $p
     return $p
+}
+
+function New-Surface {
+    param($Name, $Parent, $Location, $Size, $Tag = "Surface")
+    $surface = New-Panel -Name $Name -Parent $Parent -Location $Location -Size $Size -Tag $Tag
+    $surface.Padding = New-Object System.Windows.Forms.Padding(24)
+    return $surface
 }
 
 function New-Button {
     param($Name, $Parent, $Text, $LangKey, $Location, $Size, $Tag, $Click, $Anchor)
     $b = New-Object System.Windows.Forms.Button
-    if($Name){$b.Name=$Name}
+    if ($Name) { $b.Name = $Name }
+    if ($Location) { $b.Location = $Location }
+    if ($Size) { $b.Size = $Size }
+    if ($Tag) { $b.Tag = $Tag }
+    if ($Anchor) { $b.Anchor = $Anchor }
     $b.FlatStyle = "Flat"
     $b.FlatAppearance.BorderSize = 0
-    if($Location){$b.Location=$Location}
-    if($Size){$b.Size=$Size}
-    if($Tag){$b.Tag=$Tag}
-    if($Anchor){$b.Anchor=$Anchor}
-    if($Click){$b.Add_Click($Click)}
-    
-    if($LangKey) {
+    $b.AutoSize = $false
+    $b.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $b.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+
+    if ($LangKey) {
         Register-LangControl -Control $b -Key $LangKey
     } elseif ($Text) {
         $b.Text = $Text
     }
-    
-    # Defaults + Hover Effect
-    # UPDATED FONT SIZE: 14pt (was 12)
-    $b.Font = New-Object System.Drawing.Font("Segoe UI",14)
-    $b.AutoSize = $false
-    
-    if ($Tag -eq "SidebarBtn") { 
-        # UPDATED FONT SIZE: 14pt Bold (was 12)
-        $b.Font = New-Object System.Drawing.Font("Segoe UI",14,[System.Drawing.FontStyle]::Bold) 
+
+    if ($Tag -eq "SidebarBtn") {
+        $b.Font = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
+        $b.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+        $b.Padding = New-Object System.Windows.Forms.Padding(18, 0, 0, 0)
     } elseif ($Tag -match "Primary|Danger|Success") {
-        # UPDATED FONT SIZE: 14pt Bold (was 12)
-        $b.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
-        # Add hover effect with local storage
-        $b.Add_MouseEnter({ 
-            $this | Add-Member -MemberType NoteProperty -Name "LastColor" -Value $this.BackColor -Force -ErrorAction SilentlyContinue
-            $this.BackColor = [System.Windows.Forms.ControlPaint]::Light($this.BackColor, 0.2) 
-        })
-        $b.Add_MouseLeave({ 
-            if ($this.LastColor) { $this.BackColor = $this.LastColor } 
-        })
+        $b.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+    } else {
+        $b.Font = New-Object System.Drawing.Font("Segoe UI", 11)
     }
 
-    if($Parent){ [void]$Parent.Controls.Add($b) }
+    if ($Click) { $b.Add_Click($Click) }
+    if ($Parent) { [void]$Parent.Controls.Add($b) }
     return $b
 }
 
 function New-Label {
-    param($Name, $Parent, $Text, $LangKey, $Location, $Font, $AutoSize=$true, $Tag, $Size, $Anchor)
+    param($Name, $Parent, $Text, $LangKey, $Location, $Font, $AutoSize = $true, $Tag, $Size, $Anchor)
     $l = New-Object System.Windows.Forms.Label
-    if($Name){$l.Name=$Name}
-    if($Location){$l.Location=$Location}
-    $l.AutoSize=$AutoSize
-    if($Size){$l.Size=$Size}
-    if($Tag){$l.Tag=$Tag}
-    if($Anchor){$l.Anchor=$Anchor}
-    
-    # UPDATED FONT SIZES
-    if ($Font) { $l.Font = $Font } 
-    elseif ($Tag -eq "SectionHeader") { $l.Font = New-Object System.Drawing.Font("Segoe UI",20,[System.Drawing.FontStyle]::Bold) } 
-    elseif ($Tag -eq "SubHeader") { $l.Font = New-Object System.Drawing.Font("Segoe UI",14) } 
-    else { $l.Font = New-Object System.Drawing.Font("Segoe UI",13) } 
+    if ($Name) { $l.Name = $Name }
+    if ($Location) { $l.Location = $Location }
+    $l.AutoSize = $AutoSize
+    if ($Size) { $l.Size = $Size }
+    if ($Tag) { $l.Tag = $Tag }
+    if ($Anchor) { $l.Anchor = $Anchor }
 
-    if($LangKey) {
+    if ($Font) { $l.Font = $Font }
+    elseif ($Tag -eq "SectionHeader") { $l.Font = New-Object System.Drawing.Font("Segoe UI", 22, [System.Drawing.FontStyle]::Bold) }
+    elseif ($Tag -eq "SubHeader") { $l.Font = New-Object System.Drawing.Font("Segoe UI", 12) }
+    elseif ($Tag -eq "BodyMuted") { $l.Font = New-Object System.Drawing.Font("Segoe UI", 10) }
+    else { $l.Font = New-Object System.Drawing.Font("Segoe UI", 11) }
+
+    if ($LangKey) {
         Register-LangControl -Control $l -Key $LangKey
     } elseif ($Text) {
         $l.Text = $Text
     }
-    
-    if($Parent){ [void]$Parent.Controls.Add($l) }
+
+    if ($Parent) { [void]$Parent.Controls.Add($l) }
     return $l
 }
 
 function New-TextBox {
-    param($Name, $Parent, $Location, $Size, $Text, $Tag, $ReadOnly=$false, $Anchor)
+    param($Name, $Parent, $Location, $Size, $Text, $Tag, $ReadOnly = $false, $Anchor)
     $t = New-Object System.Windows.Forms.TextBox
-    if($Name){$t.Name=$Name}
-    if($Location){$t.Location=$Location}
-    if($Size){$t.Size=$Size}
-    if($Text){$t.Text=$Text}
-    if($Tag){$t.Tag=$Tag}
-    if($Anchor){$t.Anchor=$Anchor}
-    $t.ReadOnly=$ReadOnly
-    # UPDATED FONT SIZE: 12pt (was 10)
-    $t.Font = New-Object System.Drawing.Font("Segoe UI",12)
+    if ($Name) { $t.Name = $Name }
+    if ($Location) { $t.Location = $Location }
+    if ($Size) { $t.Size = $Size }
+    if ($Text) { $t.Text = $Text }
+    if ($Tag) { $t.Tag = $Tag }
+    if ($Anchor) { $t.Anchor = $Anchor }
+    $t.ReadOnly = $ReadOnly
+    $t.Font = New-Object System.Drawing.Font("Segoe UI", 11)
     $t.BorderStyle = "FixedSingle"
-    
-    if($Parent){ [void]$Parent.Controls.Add($t) }
+    if ($Parent) { [void]$Parent.Controls.Add($t) }
     return $t
 }
 
 function New-ComboBox {
-    param($Name, $Parent, $Location, $Size, $Tag, $Items, $SelectedIndex=0, $Anchor)
+    param($Name, $Parent, $Location, $Size, $Tag, $Items, $SelectedIndex = -1, $Anchor)
     $c = New-Object System.Windows.Forms.ComboBox
-    if($Name){$c.Name=$Name}
-    if($Location){$c.Location=$Location}
-    if($Size){$c.Size=$Size}
-    if($Tag){$c.Tag=$Tag}
-    if($Anchor){$c.Anchor=$Anchor}
-    $c.DropDownStyle="DropDownList"
-    $c.IntegralHeight = $false # prevents resizing weirdly
-    # UPDATED FONT SIZE: 12pt (was default)
-    $c.Font = New-Object System.Drawing.Font("Segoe UI",12)
-    # Ensure Add() output is suppressed
-    if($Items){ foreach($i in $Items){ [void]$c.Items.Add($i) } }
-    if($SelectedIndex -ge 0 -and $c.Items.Count -gt 0){$c.SelectedIndex=$SelectedIndex}
-    
-    if($Parent){ [void]$Parent.Controls.Add($c) }
+    if ($Name) { $c.Name = $Name }
+    if ($Location) { $c.Location = $Location }
+    if ($Size) { $c.Size = $Size }
+    if ($Tag) { $c.Tag = $Tag }
+    if ($Anchor) { $c.Anchor = $Anchor }
+    $c.DropDownStyle = "DropDownList"
+    $c.FlatStyle = "Flat"
+    $c.IntegralHeight = $false
+    $c.Font = New-Object System.Drawing.Font("Segoe UI", 11)
+    if ($Items) { foreach ($item in $Items) { [void]$c.Items.Add($item) } }
+    if ($SelectedIndex -ge 0 -and $c.Items.Count -gt $SelectedIndex) { $c.SelectedIndex = $SelectedIndex }
+    if ($Parent) { [void]$Parent.Controls.Add($c) }
     return $c
 }
 
 function New-CheckBox {
-    param($Name, $Parent, $Text, $LangKey, $Location, $Tag, $Checked=$false, $Anchor)
+    param($Name, $Parent, $Text, $LangKey, $Location, $Tag, $Checked = $false, $Anchor)
     $c = New-Object System.Windows.Forms.CheckBox
-    if($Name){$c.Name=$Name}
-    if($Location){$c.Location=$Location}
-    if($Tag){$c.Tag=$Tag}
-    if($Anchor){$c.Anchor=$Anchor}
+    if ($Name) { $c.Name = $Name }
+    if ($Location) { $c.Location = $Location }
+    if ($Tag) { $c.Tag = $Tag }
+    if ($Anchor) { $c.Anchor = $Anchor }
     $c.AutoSize = $true
     $c.Checked = $Checked
-    # UPDATED FONT SIZE: 12pt (was 10)
-    $c.Font = New-Object System.Drawing.Font("Segoe UI",12)
-
-    if($LangKey) {
+    $c.Font = New-Object System.Drawing.Font("Segoe UI", 11)
+    if ($LangKey) {
         Register-LangControl -Control $c -Key $LangKey
     } elseif ($Text) {
         $c.Text = $Text
     }
-
-    if($Parent){ [void]$Parent.Controls.Add($c) }
+    if ($Parent) { [void]$Parent.Controls.Add($c) }
     return $c
 }
 
 function New-NumericUpDown {
     param($Name, $Parent, $Location, $Tag, $Min, $Max, $Value, $Anchor)
     $n = New-Object System.Windows.Forms.NumericUpDown
-    if($Name){$n.Name=$Name}
-    if($Location){$n.Location=$Location}
-    if($Tag){$n.Tag=$Tag}
-    if($Anchor){$n.Anchor=$Anchor}
-    if($Min){$n.Minimum=$Min}
-    if($Max){$n.Maximum=$Max}
-    if($Value){$n.Value=$Value}
-    # UPDATED FONT SIZE: 12pt
-    $n.Font = New-Object System.Drawing.Font("Segoe UI",12)
-    $n.Size = New-Object System.Drawing.Size(120, 30) # Increased height
-    
-    if($Parent){ [void]$Parent.Controls.Add($n) }
+    if ($Name) { $n.Name = $Name }
+    if ($Location) { $n.Location = $Location }
+    if ($Tag) { $n.Tag = $Tag }
+    if ($Anchor) { $n.Anchor = $Anchor }
+    $n.Minimum = $Min
+    $n.Maximum = $Max
+    $n.Value = $Value
+    $n.Font = New-Object System.Drawing.Font("Segoe UI", 11)
+    $n.BorderStyle = "FixedSingle"
+    $n.Size = New-Object System.Drawing.Size(160, 36)
+    if ($Parent) { [void]$Parent.Controls.Add($n) }
     return $n
 }
 
-# --- Main Form ---
-$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-$FormW = [int]($screen.Width * 0.75)
-$FormH = [int]($screen.Height * 0.85)
+$script:PageRegistry = @()
 
-$Form = New-Object System.Windows.Forms.Form
-$Form.Text = $Lang.Title
-$Form.Size = New-Object System.Drawing.Size($FormW, $FormH)
-$Form.StartPosition = "CenterScreen"
-$Form.FormBorderStyle = "Sizable"
-$Form.BackColor = [System.Drawing.Color]::FromArgb(30,30,30)
-$Form.ForeColor = [System.Drawing.Color]::White
-$Form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
-$Form.AutoScaleMode = "Dpi"
-$Form.WindowState = 'Maximized'
-
-
-# Sidebar (Left Dock) - Increased Width to 260 for larger fonts
-$Sidebar = New-Panel -Name "Sidebar" -Parent $Form -Dock "Left" -Size (New-Object System.Drawing.Size(260, $FormH)) -Tag "Sidebar"
-
-# Dynamic Sidebar Layout Calculation
-[int]$sbY = 20
-[int]$sbH = 50 # Increased Button Height
-[int]$sbGap = 10
-$BtnDashboard    = New-Button -Parent $Sidebar -LangKey "Dashboard"    -Location (New-Object System.Drawing.Point(10,$sbY))  -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
-$sbY += $sbH + $sbGap
-$BtnInstallation = New-Button -Parent $Sidebar -LangKey "Installation" -Location (New-Object System.Drawing.Point(10,$sbY))  -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
-$sbY += $sbH + $sbGap
-$BtnTheme        = New-Button -Parent $Sidebar -LangKey "Themes"       -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
-$sbY += $sbH + $sbGap
-$BtnBehavior     = New-Button -Parent $Sidebar -LangKey "Behavior"     -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
-$sbY += $sbH + $sbGap
-$BtnHardening    = New-Button -Parent $Sidebar -LangKey "Hardening"    -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
-$sbY += $sbH + $sbGap
-$BtnRepair       = New-Button -Parent $Sidebar -LangKey "Repair"       -Location (New-Object System.Drawing.Point(10,$sbY)) -Size (New-Object System.Drawing.Size(240,$sbH)) -Tag "SidebarBtn"
-
-# Footer (Bottom Dock)
-$Footer = New-Panel -Name "Footer" -Parent $Form -Dock "Bottom" -Size (New-Object System.Drawing.Size($FormW, 60)) -Tag "Footer"
-
-$BtnExec = New-Button -Parent $Footer -LangKey "Execute" -Location (New-Object System.Drawing.Point(280, 8)) -Size (New-Object System.Drawing.Size(360, 44)) -Tag "PrimaryButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left)
-
-$ProgressBar = New-Object System.Windows.Forms.ProgressBar
-$ProgressBar.Location = New-Object System.Drawing.Point(660, 20)
-$ProgressBar.Size = New-Object System.Drawing.Size(280, 25)
-$ProgressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-[void]$Footer.Controls.Add($ProgressBar)
-
-$StatusLabel = New-Label -Parent $Footer -LangKey "Status" -Location (New-Object System.Drawing.Point(960, 20)) -Font (New-Object System.Drawing.Font("Segoe UI", 14)) -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
-
-# Main Panel (Fill Rest) - Increased Padding to 30
-$MainPanel = New-Panel -Name "MainPanel" -Parent $Form -Dock "Fill" -Tag "MainPanel" -Padding (New-Object System.Windows.Forms.Padding(30))
-[void]$MainPanel.BringToFront()
-
-# --- Pages Setup ---
 function New-PagePanel {
-    $p = New-Panel -Dock "Fill" -Tag "Page" -BackColor ([System.Drawing.Color]::FromArgb(28,28,28))
+    param([int]$CanvasHeight = 900)
+    $p = New-Panel -Dock "Fill" -Tag "Page"
     $p.Visible = $false
+    $p.AutoScroll = $true
+    $canvas = New-Panel -Name "Canvas" -Parent $p -Location (New-Object System.Drawing.Point(24, 18)) -Size (New-Object System.Drawing.Size(1040, $CanvasHeight)) -Tag "Canvas"
+    $p.AutoScrollMinSize = New-Object System.Drawing.Size(1064, [Math]::Max(0, $CanvasHeight + 36))
+    $script:PageRegistry += $p
     return $p
 }
 
-$PageDashboard   = New-PagePanel; [void]$MainPanel.Controls.Add($PageDashboard)
-$PageInstallation= New-PagePanel; [void]$MainPanel.Controls.Add($PageInstallation)
-$PageTheme       = New-PagePanel; [void]$MainPanel.Controls.Add($PageTheme)
-$PageBehavior    = New-PagePanel; [void]$MainPanel.Controls.Add($PageBehavior)
-$PageHardening   = New-PagePanel; [void]$MainPanel.Controls.Add($PageHardening)
-$PageRepair      = New-PagePanel; [void]$MainPanel.Controls.Add($PageRepair)
+function Get-PageCanvas {
+    param($Page)
+    return $Page.Controls | Where-Object { $_.Name -eq "Canvas" } | Select-Object -First 1
+}
 
-# Layout constants for Dynamic Positioning
-[int]$padX = 30
-[int]$padY = 30
-[int]$gapSmall = 15
-[int]$gapMed = 30
-[int]$gapLarge = 40
-[int]$inputH = 35
-
-# --- Dashboard Page ---
-[int]$curY = $padY
-$DashTitle = New-Label -Parent $PageDashboard -LangKey "DashTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
-$curY += $DashTitle.Height + $gapSmall
-$DashSub = New-Label -Parent $PageDashboard -LangKey "DashSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
-$curY += $DashSub.Height + $gapSmall
-$DashHint = New-Label -Parent $PageDashboard -LangKey "DashHint" -Location (New-Object System.Drawing.Point($padX,$curY)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
-
-$curY += $DashHint.Height + 50 # Spacer
-
-# GUI Theme
-$LblGuiTheme = New-Label -Parent $PageDashboard -LangKey "GuiTheme" -Location (New-Object System.Drawing.Point($padX, $curY))
-$curY += $LblGuiTheme.Height + 5
-$CboGuiTheme = New-ComboBox -Parent $PageDashboard -Location (New-Object System.Drawing.Point($padX, $curY)) -Size (New-Object System.Drawing.Size(350, $inputH)) -Tag "Input" -Items $GuiThemes.Keys
-$CboGuiTheme.SelectedIndex = 0
-$CboGuiTheme.Add_SelectedIndexChanged({ Apply-GuiTheme -ThemeName $CboGuiTheme.Text })
-
-$curY += $inputH + $gapMed
-
-# Manual Language
-$LblLang = New-Label -Parent $PageDashboard -LangKey "Language" -Location (New-Object System.Drawing.Point($padX, $curY))
-$curY += $LblLang.Height + 5
-$CboLang = New-ComboBox -Parent $PageDashboard -Location (New-Object System.Drawing.Point($padX, $curY)) -Size (New-Object System.Drawing.Size(350, $inputH)) -Tag "Input" -Items $AvailableLanguages.Keys
-$CboLang.SelectedItem = $CurrentLangCode
-
-# Logic Update Interface
-function Update-InterfaceText {
-    $Form.Text = $Lang.Title
-    # Iterate registry to update text
-    foreach ($entry in $script:LanguageRegistry) {
-        if ($entry.Control -and $entry.Control.IsDisposed -eq $false) {
-            $entry.Control.Text = $Lang[$entry.Key]
-            # Enforce auto-size checks for labels
-            if ($entry.Control -is [System.Windows.Forms.Label]) {
-                 # Force refresh of bounds if needed
-            }
-        }
+function Center-PageCanvas {
+    param($Page)
+    $canvas = Get-PageCanvas $Page
+    if ($canvas) {
+        $canvas.Left = [Math]::Max(18, [int](($Page.ClientSize.Width - $canvas.Width) / 2))
+        $canvas.Top = 18
     }
 }
 
-$CboLang.Add_SelectedIndexChanged({
-    Apply-LanguageData $CboLang.Text
-    Update-InterfaceText
-})
+function Sync-PageCanvases {
+    foreach ($page in $script:PageRegistry) {
+        if ($page -and -not $page.IsDisposed) { Center-PageCanvas $page }
+    }
+}
+
+function New-ActionTile {
+    param($Parent, $Location, $Title, $Description, $ButtonText, $ButtonTag, $Action)
+    $tile = New-Surface -Parent $Parent -Location $Location -Size (New-Object System.Drawing.Size(332, 164))
+    [void](New-Label -Parent $tile -Text $Title -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)))
+    [void](New-Label -Parent $tile -Text $Description -Location (New-Object System.Drawing.Point(24, 56)) -Size (New-Object System.Drawing.Size(284, 48)) -AutoSize $false -Tag "BodyMuted")
+    $btn = New-Button -Parent $tile -Text $ButtonText -Location (New-Object System.Drawing.Point(24, 110)) -Size (New-Object System.Drawing.Size(184, 34)) -Tag $ButtonTag -Click $Action
+    return @{ Panel = $tile; Button = $btn }
+}
+
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$FormW = [Math]::Min(1440, [Math]::Max(1320, [int]($screen.Width * 0.88)))
+$FormH = [Math]::Min(940, [Math]::Max(840, [int]($screen.Height * 0.88)))
+
+$Form = New-Object System.Windows.Forms.Form
+# codex-branding:start
+$brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
+if (Test-Path $brandingIconPath) {
+    try {
+        $Form.Icon = New-Object System.Drawing.Icon($brandingIconPath)
+    } catch {}
+}
+# codex-branding:end
+$Form.Text = $Lang.Title
+$Form.Size = New-Object System.Drawing.Size($FormW, $FormH)
+$Form.MinimumSize = New-Object System.Drawing.Size(1320, 840)
+$Form.StartPosition = "CenterScreen"
+$Form.FormBorderStyle = "Sizable"
+$Form.BackColor = [System.Drawing.Color]::FromArgb(13, 18, 28)
+$Form.ForeColor = [System.Drawing.Color]::White
+$Form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+$Form.AutoScaleMode = "Dpi"
+$Form.KeyPreview = $true
+Enable-DoubleBuffer $Form
+
+$Sidebar = New-Panel -Name "Sidebar" -Parent $Form -Dock "Left" -Size (New-Object System.Drawing.Size(252, $FormH)) -Tag "Sidebar"
+$Footer = New-Panel -Name "Footer" -Parent $Form -Dock "Bottom" -Size (New-Object System.Drawing.Size($FormW, 88)) -Tag "Footer"
+$MainPanel = New-Panel -Name "MainPanel" -Parent $Form -Dock "Fill" -Tag "MainPanel"
+
+$SidebarBrand = New-Surface -Parent $Sidebar -Location (New-Object System.Drawing.Point(16, 18)) -Size (New-Object System.Drawing.Size(220, 132)) -Tag "SidebarAlt"
+$LogoBox = New-Object System.Windows.Forms.PictureBox
+$LogoBox.Location = New-Object System.Drawing.Point(24, 26)
+$LogoBox.Size = New-Object System.Drawing.Size(52, 52)
+$LogoBox.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+$brandPngPath = Join-Path $PSScriptRoot "icon.png"
+if (Test-Path $brandPngPath) {
+    try { $LogoBox.Image = [System.Drawing.Image]::FromFile($brandPngPath) } catch {}
+}
+[void]$SidebarBrand.Controls.Add($LogoBox)
+[void](New-Label -Parent $SidebarBrand -Text "JDownloader 2" -Location (New-Object System.Drawing.Point(88, 28)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $SidebarBrand -Text "Ultimate Manager" -Location (New-Object System.Drawing.Point(88, 54)) -Font (New-Object System.Drawing.Font("Segoe UI", 12)) -Tag "MutedStrong")
+[void](New-Label -Parent $SidebarBrand -Text "Install, refine, harden, and repair from one calm workspace." -Location (New-Object System.Drawing.Point(24, 88)) -Size (New-Object System.Drawing.Size(172, 34)) -AutoSize $false -Tag "BodyMuted")
+
+$SidebarFooter = New-Panel -Parent $Sidebar -Dock "Bottom" -Size (New-Object System.Drawing.Size(252, 150)) -Tag "Sidebar"
+$SidebarNote = New-Surface -Parent $SidebarFooter -Location (New-Object System.Drawing.Point(16, 10)) -Size (New-Object System.Drawing.Size(220, 124)) -Tag "SidebarAlt"
+[void](New-Label -Parent $SidebarNote -Text "Before you run" -Location (New-Object System.Drawing.Point(24, 20)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $SidebarNote -Text "Admin rights are required. Existing configs are backed up before changes are applied." -Location (New-Object System.Drawing.Point(24, 46)) -Size (New-Object System.Drawing.Size(172, 52)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $SidebarNote -Text "Best flow: review every page, then apply once." -Location (New-Object System.Drawing.Point(24, 98)) -Size (New-Object System.Drawing.Size(172, 18)) -AutoSize $false -Tag "BodyMuted")
+
+[int]$sbY = 168
+[int]$sbH = 44
+[int]$sbGap = 8
+$BtnDashboard    = New-Button -Parent $Sidebar -LangKey "Dashboard"    -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnInstallation = New-Button -Parent $Sidebar -LangKey "Installation" -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnTheme        = New-Button -Parent $Sidebar -LangKey "Themes"       -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnBehavior     = New-Button -Parent $Sidebar -LangKey "Behavior"     -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnHardening    = New-Button -Parent $Sidebar -LangKey "Hardening"    -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
+$BtnRepair       = New-Button -Parent $Sidebar -LangKey "Repair"       -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+
+$BtnExec = New-Button -Parent $Footer -LangKey "Execute" -Location (New-Object System.Drawing.Point(24, 20)) -Size (New-Object System.Drawing.Size(248, 46)) -Tag "PrimaryButton"
+$FooterSummary = New-Label -Parent $Footer -LangKey "FooterSummary" -Location (New-Object System.Drawing.Point(296, 18)) -Size (New-Object System.Drawing.Size(300, 18)) -AutoSize $false -Tag "BodyMuted"
+$ProgressBar = New-Object System.Windows.Forms.ProgressBar
+$ProgressBar.Location = New-Object System.Drawing.Point(296, 46)
+$ProgressBar.Size = New-Object System.Drawing.Size(300, 10)
+$ProgressBar.Style = "Continuous"
+$ProgressBar.Value = 0
+$ProgressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
+[void]$Footer.Controls.Add($ProgressBar)
+$StatusLabel = New-Label -Parent $Footer -Text "Status: Ready" -Location (New-Object System.Drawing.Point(624, 29)) -Size (New-Object System.Drawing.Size(560, 22)) -AutoSize $false -Tag "MutedStrong"
+$StatusLabel.AutoEllipsis = $true
+$StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$Form.AcceptButton = $BtnExec
+
+$PageDashboard    = New-PagePanel -CanvasHeight 666; [void]$MainPanel.Controls.Add($PageDashboard)
+$PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
+$PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
+$PageBehavior     = New-PagePanel -CanvasHeight 560; [void]$MainPanel.Controls.Add($PageBehavior)
+$PageHardening    = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageHardening)
+$PageRepair       = New-PagePanel -CanvasHeight 740; [void]$MainPanel.Controls.Add($PageRepair)
+
+$DashboardCanvas = Get-PageCanvas $PageDashboard
+$InstallationCanvas = Get-PageCanvas $PageInstallation
+$ThemeCanvas = Get-PageCanvas $PageTheme
+$BehaviorCanvas = Get-PageCanvas $PageBehavior
+$HardeningCanvas = Get-PageCanvas $PageHardening
+$RepairCanvas = Get-PageCanvas $PageRepair
+
+# --- Dashboard Page ---
+$DashHero = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 216))
+[void](New-Label -Parent $DashHero -Text "DESKTOP CONTROL CENTER" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+$DashTitle = New-Label -Parent $DashHero -LangKey "DashTitle" -Location (New-Object System.Drawing.Point(24, 46)) -Font (New-Object System.Drawing.Font("Segoe UI", 28, [System.Drawing.FontStyle]::Bold))
+$DashSub = New-Label -Parent $DashHero -LangKey "DashSub" -Location (New-Object System.Drawing.Point(24, 96)) -Size (New-Object System.Drawing.Size(602, 50)) -AutoSize $false -Tag "SubHeader"
+$DashHint = New-Label -Parent $DashHero -LangKey "DashHint" -Location (New-Object System.Drawing.Point(24, 154)) -Size (New-Object System.Drawing.Size(622, 38)) -AutoSize $false -Tag "BodyMuted"
+$DashOverview = New-Surface -Parent $DashHero -Location (New-Object System.Drawing.Point(698, 18)) -Size (New-Object System.Drawing.Size(318, 192)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $DashOverview -Text "Session overview" -Location (New-Object System.Drawing.Point(24, 20)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)))
+$DashInstallStatus = New-Label -Parent $DashOverview -Text "Not detected yet" -Location (New-Object System.Drawing.Point(24, 52)) -Font (New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold))
+$DashInstallDetail = New-Label -Parent $DashOverview -Text "Choose an existing install or switch to clean install mode." -Location (New-Object System.Drawing.Point(24, 84)) -Size (New-Object System.Drawing.Size(260, 34)) -AutoSize $false -Tag "BodyMuted"
+[void](New-Label -Parent $DashOverview -Text "Current run mode" -Location (New-Object System.Drawing.Point(24, 118)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+$DashModeDetail = New-Label -Parent $DashOverview -Text "Modify current installation" -Location (New-Object System.Drawing.Point(24, 138)) -Size (New-Object System.Drawing.Size(260, 18)) -AutoSize $false -Tag "MutedStrong"
+[void](New-Label -Parent $DashOverview -Text "Last successful run" -Location (New-Object System.Drawing.Point(24, 160)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+$DashLastAppliedValue = New-Label -Parent $DashOverview -Text "Last applied: Not yet" -Location (New-Object System.Drawing.Point(24, 178)) -Size (New-Object System.Drawing.Size(260, 16)) -AutoSize $false -Tag "MutedStrong"
+
+$DashCardInstall = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(0, 238)) -Size (New-Object System.Drawing.Size(332, 124))
+[void](New-Label -Parent $DashCardInstall -Text "Installation coverage" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $DashCardInstall -Text "Modify an existing setup or shift into a clean-install flow without leaving the tool." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(284, 48)) -AutoSize $false -Tag "BodyMuted")
+$DashCardTheme = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(354, 238)) -Size (New-Object System.Drawing.Size(332, 124))
+[void](New-Label -Parent $DashCardTheme -Text "Theme refinement" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $DashCardTheme -Text "Preview community looks, layer icon packs, and keep the interface clean with tighter defaults." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(284, 48)) -AutoSize $false -Tag "BodyMuted")
+$DashCardSafety = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(708, 238)) -Size (New-Object System.Drawing.Size(332, 124))
+[void](New-Label -Parent $DashCardSafety -Text "Confidence and recovery" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $DashCardSafety -Text "Backups, audits, safe mode, cache cleanup, and uninstall tools all stay close at hand." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(284, 48)) -AutoSize $false -Tag "BodyMuted")
+
+$DashPrefs = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(0, 386)) -Size (New-Object System.Drawing.Size(1040, 224))
+[void](New-Label -Parent $DashPrefs -Text "Workspace preferences" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $DashPrefs -Text "Set the app chrome once, then the tool remembers the workspace on the next launch." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(620, 24)) -AutoSize $false -Tag "BodyMuted")
+$LblGuiTheme = New-Label -Parent $DashPrefs -LangKey "GuiTheme" -Location (New-Object System.Drawing.Point(24, 96))
+$CboGuiTheme = New-ComboBox -Parent $DashPrefs -Location (New-Object System.Drawing.Point(24, 124)) -Size (New-Object System.Drawing.Size(290, 36)) -Tag "Input" -Items $GuiThemes.Keys
+$LblLang = New-Label -Parent $DashPrefs -LangKey "Language" -Location (New-Object System.Drawing.Point(348, 96))
+$CboLang = New-ComboBox -Parent $DashPrefs -Location (New-Object System.Drawing.Point(348, 124)) -Size (New-Object System.Drawing.Size(290, 36)) -Tag "Input" -Items $AvailableLanguages.Keys
+$DashPrefsNote = New-Surface -Parent $DashPrefs -Location (New-Object System.Drawing.Point(684, 80)) -Size (New-Object System.Drawing.Size(332, 128)) -Tag "Callout"
+[void](New-Label -Parent $DashPrefsNote -Text "Workspace status" -Location (New-Object System.Drawing.Point(18, 16)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)))
+$DashPrefsStateValue = New-Label -Parent $DashPrefsNote -Text "No saved workspace yet" -Location (New-Object System.Drawing.Point(18, 40)) -Font (New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold))
+$DashPrefsStateDetail = New-Label -Parent $DashPrefsNote -Text "Your selected path, theme, language, and run options will be remembered after the first successful run." -Location (New-Object System.Drawing.Point(18, 68)) -Size (New-Object System.Drawing.Size(286, 28)) -AutoSize $false -Tag "BodyMuted"
+$BtnRestoreWorkspace = New-Button -Parent $DashPrefsNote -Text "Restore last run" -Location (New-Object System.Drawing.Point(18, 96)) -Size (New-Object System.Drawing.Size(138, 28)) -Tag "SecondaryButton"
 
 # --- Installation Page ---
-$curY = $padY
-$InstTitle = New-Label -Parent $PageInstallation -LangKey "InstTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
-$curY += $InstTitle.Height + $gapSmall
-$InstSub = New-Label -Parent $PageInstallation -LangKey "InstSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
-$curY += $InstSub.Height + $gapLarge
+$InstallHero = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 160))
+$InstTitle = New-Label -Parent $InstallHero -LangKey "InstTitle" -Location (New-Object System.Drawing.Point(24, 24)) -Tag "SectionHeader"
+$InstSub = New-Label -Parent $InstallHero -LangKey "InstSub" -Location (New-Object System.Drawing.Point(24, 62)) -Size (New-Object System.Drawing.Size(690, 44)) -AutoSize $false -Tag "SubHeader"
+$InstallBadge = New-Label -Parent $InstallHero -Text "Detection pending" -Location (New-Object System.Drawing.Point(804, 34)) -Font (New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold))
+[void](New-Label -Parent $InstallHero -Text "The tool can work against an existing install or prepare a fresh one for you." -Location (New-Object System.Drawing.Point(804, 68)) -Size (New-Object System.Drawing.Size(190, 38)) -AutoSize $false -Tag "BodyMuted")
 
-$LblPath = New-Label -Parent $PageInstallation -LangKey "InstPath" -Location (New-Object System.Drawing.Point($padX,$curY))
-$curY += $LblPath.Height + 5
-$TxtPath = New-TextBox -Parent $PageInstallation -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(600,$inputH)) -Tag "Input" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right)
+$PathSurface = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(0, 184)) -Size (New-Object System.Drawing.Size(640, 246))
+[void](New-Label -Parent $PathSurface -Text "Where JDownloader lives" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $PathSurface -Text "Use this when modifying an existing install. Clean install mode can start with a blank path." -Location (New-Object System.Drawing.Point(24, 50)) -Size (New-Object System.Drawing.Size(566, 34)) -AutoSize $false -Tag "BodyMuted")
+$LblPath = New-Label -Parent $PathSurface -LangKey "InstPath" -Location (New-Object System.Drawing.Point(24, 94))
+$TxtPath = New-TextBox -Parent $PathSurface -Location (New-Object System.Drawing.Point(24, 122)) -Size (New-Object System.Drawing.Size(592, 36)) -Tag "Input"
+$LblPathState = New-Label -Parent $PathSurface -Text "Choose an existing JDownloader folder, or keep clean install mode selected." -Location (New-Object System.Drawing.Point(24, 164)) -Size (New-Object System.Drawing.Size(592, 34)) -AutoSize $false -Tag "BodyMuted"
+$BtnBrowse = New-Button -Parent $PathSurface -LangKey "Browse" -Location (New-Object System.Drawing.Point(24, 202)) -Size (New-Object System.Drawing.Size(132, 34)) -Tag "SecondaryButton"
+$BtnDetect = New-Button -Parent $PathSurface -LangKey "AutoDetect" -Location (New-Object System.Drawing.Point(168, 202)) -Size (New-Object System.Drawing.Size(148, 34)) -Tag "SecondaryButton"
 
-# Inline Validation
-$TxtPath.Add_TextChanged({
-    if ($TxtPath.Text.Length -gt 0 -and (-not (Test-Path $TxtPath.Text))) {
-        $TxtPath.BackColor = [System.Drawing.Color]::FromArgb(60,20,20) # Red-ish
-    } else {
-        $TxtPath.BackColor = [System.Drawing.Color]::FromArgb(40,40,40)
+$ModeSurface = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(662, 184)) -Size (New-Object System.Drawing.Size(378, 246)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $ModeSurface -Text "Install mode" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $ModeSurface -Text "Pick how the tool should approach this machine." -Location (New-Object System.Drawing.Point(24, 50)) -Size (New-Object System.Drawing.Size(320, 18)) -AutoSize $false -Tag "BodyMuted")
+$LblMode = New-Label -Parent $ModeSurface -LangKey "InstMode" -Location (New-Object System.Drawing.Point(24, 92))
+$CboMode = New-ComboBox -Parent $ModeSurface -Location (New-Object System.Drawing.Point(24, 120)) -Size (New-Object System.Drawing.Size(330, 36)) -Tag "Input" -Items @("Modify Existing (keep current install)", "Clean Install (download from GitHub)", "Clean Install (manual Mega download)")
+$InstallModeSummaryTitle = New-Label -Parent $ModeSurface -Text "Modify an existing install" -Location (New-Object System.Drawing.Point(24, 172)) -Font (New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold))
+$LblModeHelp = New-Label -Parent $ModeSurface -Text "Use this when JDownloader is already present and you want to refine its configuration in place." -Location (New-Object System.Drawing.Point(24, 196)) -Size (New-Object System.Drawing.Size(330, 36)) -AutoSize $false -Tag "BodyMuted"
+
+$InstallNotes = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(0, 454)) -Size (New-Object System.Drawing.Size(1040, 122))
+[void](New-Label -Parent $InstallNotes -Text "What this protects" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $InstallNotes -Text "Backups are created before modify-mode changes." -Location (New-Object System.Drawing.Point(24, 60)) -Tag "BodyMuted")
+[void](New-Label -Parent $InstallNotes -Text "Theme, icon, and behavior changes apply after install completes." -Location (New-Object System.Drawing.Point(360, 60)) -Tag "BodyMuted")
+[void](New-Label -Parent $InstallNotes -Text "If GitHub install fails, the app can fall back to the manual Mega flow." -Location (New-Object System.Drawing.Point(700, 60)) -Size (New-Object System.Drawing.Size(280, 36)) -AutoSize $false -Tag "BodyMuted")
+
+function Update-InterfaceText {
+    $Form.Text = $Lang.Title
+    foreach ($entry in $script:LanguageRegistry) {
+        if ($entry.Control -and -not $entry.Control.IsDisposed) {
+            $entry.Control.Text = $Lang[$entry.Key]
+        }
     }
-})
+    Update-ModeSummary
+    Update-ThemePreview
+    Layout-Footer
+    Update-WorkspaceState
+}
 
-$BtnBrowse = New-Button -Parent $PageInstallation -LangKey "Browse" -Location (New-Object System.Drawing.Point(640,[int]($curY-1))) -Size (New-Object System.Drawing.Size(120,[int]($inputH+2))) -Tag "NavButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
-$BtnBrowse.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtPath.Text = $fbd.SelectedPath } })
+function Layout-Footer {
+    if (-not $Footer -or -not $BtnExec -or -not $FooterSummary -or -not $ProgressBar -or -not $StatusLabel) { return }
+    $contentLeft = $BtnExec.Right + 24
+    $availableWidth = [Math]::Max(520, $Footer.ClientSize.Width - $contentLeft - 24)
+    $progressWidth = [Math]::Max(240, [Math]::Min(420, [int]($availableWidth * 0.42)))
+    $FooterSummary.Location = New-Object System.Drawing.Point($contentLeft, 18)
+    $FooterSummary.Size = New-Object System.Drawing.Size($progressWidth, 18)
+    $ProgressBar.Location = New-Object System.Drawing.Point($contentLeft, 46)
+    $ProgressBar.Size = New-Object System.Drawing.Size($progressWidth, 10)
+    $statusLeft = $ProgressBar.Right + 28
+    $statusWidth = [Math]::Max(220, $Footer.ClientSize.Width - $statusLeft - 24)
+    $StatusLabel.Location = New-Object System.Drawing.Point($statusLeft, 29)
+    $StatusLabel.Size = New-Object System.Drawing.Size($statusWidth, 22)
+}
 
-$BtnDetect = New-Button -Parent $PageInstallation -LangKey "AutoDetect" -Location (New-Object System.Drawing.Point(770,[int]($curY-1))) -Size (New-Object System.Drawing.Size(140,[int]($inputH+2))) -Tag "NavButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
-$BtnDetect.Add_Click({ $p = Detect-JDPath; if ($p) { $TxtPath.Text = $p; Log-Status "Auto detected: $p" } })
+function Set-WorkspaceBusyState {
+    param([bool]$IsBusy)
+    if ($Sidebar) { $Sidebar.Enabled = -not $IsBusy }
+    if ($MainPanel) { $MainPanel.Enabled = -not $IsBusy }
+    if ($BtnExec) {
+        $BtnExec.Enabled = -not $IsBusy
+        $BtnExec.Text = if ($IsBusy) { Get-LangValue -Key "Running" -Fallback "Applying changes..." } else { $Lang.Execute }
+    }
+    if ($Form) { $Form.UseWaitCursor = $IsBusy }
+    Layout-Footer
+}
 
-$curY += $inputH + $gapMed
+function Configure-DirectoryInput {
+    param($TextBox, [string]$CueText)
+    if (-not $TextBox) { return }
+    $TextBox.AutoCompleteMode = "SuggestAppend"
+    $TextBox.AutoCompleteSource = "FileSystemDirectories"
+    Set-CueBanner -Control $TextBox -Text $CueText
+}
 
-$LblMode = New-Label -Parent $PageInstallation -LangKey "InstMode" -Location (New-Object System.Drawing.Point($padX,$curY))
-$curY += $LblMode.Height + 5
-$CboMode = New-ComboBox -Parent $PageInstallation -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(500,$inputH)) -Tag "Input" -Items @("Modify Existing (keep current install)", "Clean Install (download from GitHub)", "Clean Install (manual Mega download)")
-$curY += $inputH + $gapSmall
-$LblModeHelp = New-Label -Parent $PageInstallation -LangKey "InstModeHelp" -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(800,60)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
+function Focus-InstallPath {
+    if ($BtnInstallation -and $TxtPath) {
+        Show-Page -Button $BtnInstallation
+        $TxtPath.Select()
+        $null = $TxtPath.Focus()
+    }
+}
+
+function Apply-StateToControls {
+    param($State)
+    if (-not $State) { return }
+
+    $previousBootstrapping = $script:IsBootstrapping
+    $script:IsBootstrapping = $true
+    try {
+        if ($State.PSObject.Properties.Name -contains "InstallPath") { $TxtPath.Text = [string]$State.InstallPath }
+        if ($State.PSObject.Properties.Name -contains "ThemeName") { $CboTheme.Text = [string]$State.ThemeName }
+        if ($State.PSObject.Properties.Name -contains "GuiThemeName" -and $CboGuiTheme.Items.Contains($State.GuiThemeName)) { $CboGuiTheme.Text = [string]$State.GuiThemeName }
+        if ($State.PSObject.Properties.Name -contains "LanguageCode" -and $CboLang.Items.Contains($State.LanguageCode)) { $CboLang.SelectedItem = [string]$State.LanguageCode }
+        if ($State.PSObject.Properties.Name -contains "IconPack") { $CboIcons.Text = [string]$State.IconPack }
+        if ($State.PSObject.Properties.Name -contains "WindowDec") { $ChkWinDec.Checked = [bool]$State.WindowDec }
+        if ($State.PSObject.Properties.Name -contains "ForceMinimal") { $ChkMinLay.Checked = [bool]$State.ForceMinimal }
+        if ($State.PSObject.Properties.Name -contains "MaxSim") { $NumSim.Value = [decimal]$State.MaxSim }
+        if ($State.PSObject.Properties.Name -contains "PauseSpeed") { $NumPause.Value = [decimal]$State.PauseSpeed }
+        if ($State.PSObject.Properties.Name -contains "DlFolder") { $TxtDl.Text = [string]$State.DlFolder }
+        if ($State.PSObject.Properties.Name -contains "StartMin") { $ChkMin.Checked = [bool]$State.StartMin }
+        if ($State.PSObject.Properties.Name -contains "MinToTray") { $ChkTray.Checked = [bool]$State.MinToTray }
+        if ($State.PSObject.Properties.Name -contains "CloseToTray") { $ChkCloseTray.Checked = [bool]$State.CloseToTray }
+        if ($State.PSObject.Properties.Name -contains "PatchExe") { $ChkExe.Checked = [bool]$State.PatchExe }
+        if ($State.PSObject.Properties.Name -contains "AutoUpdate") { $ChkUpdate.Checked = [bool]$State.AutoUpdate }
+        if ($State.PSObject.Properties.Name -contains "Mode") {
+            if ($State.Mode -eq "Modify") { $CboMode.SelectedIndex = 0 }
+            elseif ($State.PSObject.Properties.Name -contains "InstallSource" -and $State.InstallSource -eq "Mega") { $CboMode.SelectedIndex = 2 }
+            else { $CboMode.SelectedIndex = 1 }
+        }
+    } finally {
+        $script:IsBootstrapping = $previousBootstrapping
+    }
+
+    Apply-GuiTheme -ThemeName $CboGuiTheme.Text
+    Update-ModeSummary
+    Update-PathState
+    Update-DownloadFolderState
+    Update-ThemePreview
+    Update-WorkspaceState
+}
+
+function Get-CurrentGuiState {
+    if (-not $CboMode -or -not $CboTheme -or -not $CboGuiTheme -or -not $CboIcons) { return $null }
+    $mode = "Modify"
+    $src = $null
+    if ($CboMode.SelectedIndex -eq 1) {
+        $mode = "Install"
+        $src = "GitHub"
+    } elseif ($CboMode.SelectedIndex -eq 2) {
+        $mode = "Install"
+        $src = "Mega"
+    }
+
+    return [ordered]@{
+        Mode         = $mode
+        InstallSource= $src
+        InstallPath  = $TxtPath.Text.Trim()
+        ThemeName    = $CboTheme.Text
+        GuiThemeName = $CboGuiTheme.Text
+        LanguageCode = $CboLang.Text
+        IconPack     = $CboIcons.Text
+        WindowDec    = [bool]$ChkWinDec.Checked
+        MaxSim       = [int]$NumSim.Value
+        DlFolder     = $TxtDl.Text.Trim()
+        StartMin     = [bool]$ChkMin.Checked
+        MinToTray    = [bool]$ChkTray.Checked
+        CloseToTray  = [bool]$ChkCloseTray.Checked
+        PatchExe     = [bool]$ChkExe.Checked
+        AutoUpdate   = [bool]$ChkUpdate.Checked
+        ForceMinimal = [bool]$ChkMinLay.Checked
+        PauseSpeed   = [int]$NumPause.Value
+    }
+}
+
+function Get-NormalizedStateObject {
+    param($State)
+    if (-not $State) { return $null }
+
+    $mode = if ([string]$State.Mode -eq "Install") { "Install" } else { "Modify" }
+    $installSource = ""
+    if ($mode -eq "Install") {
+        $installSource = if ([string]$State.InstallSource -eq "Mega") { "Mega" } else { "GitHub" }
+    }
+
+    $languageCode = [string]$State.LanguageCode
+    if ([string]::IsNullOrWhiteSpace($languageCode)) { $languageCode = $CurrentLangCode }
+
+    return [ordered]@{
+        Mode         = $mode
+        InstallSource= $installSource
+        InstallPath  = ([string]$State.InstallPath).Trim()
+        ThemeName    = [string]$State.ThemeName
+        GuiThemeName = [string]$State.GuiThemeName
+        LanguageCode = $languageCode
+        IconPack     = [string]$State.IconPack
+        WindowDec    = [bool]$State.WindowDec
+        MaxSim       = [int]$State.MaxSim
+        DlFolder     = ([string]$State.DlFolder).Trim()
+        StartMin     = [bool]$State.StartMin
+        MinToTray    = [bool]$State.MinToTray
+        CloseToTray  = [bool]$State.CloseToTray
+        PatchExe     = [bool]$State.PatchExe
+        AutoUpdate   = [bool]$State.AutoUpdate
+        ForceMinimal = [bool]$State.ForceMinimal
+        PauseSpeed   = [int]$State.PauseSpeed
+    }
+}
+
+function Get-LastAppliedDisplayText {
+    if (Test-Path $SettingsFile) {
+        return "Last applied: {0}" -f ((Get-Item $SettingsFile).LastWriteTime.ToString("MMM d, yyyy h:mm tt"))
+    }
+    return "Last applied: Not yet"
+}
+
+function Join-ReadableList {
+    param([string[]]$Items)
+    if (-not $Items -or $Items.Count -eq 0) { return "" }
+    if ($Items.Count -eq 1) { return $Items[0] }
+    if ($Items.Count -eq 2) { return "$($Items[0]) and $($Items[1])" }
+    return "{0}, and {1}" -f (($Items[0..($Items.Count - 2)] -join ", ")), $Items[-1]
+}
+
+function Get-ChangedWorkspaceAreas {
+    param($SavedState, $CurrentState)
+    if (-not $SavedState -or -not $CurrentState) { return @() }
+
+    $areaMap = [ordered]@{
+        "installation setup"   = @("Mode", "InstallSource", "InstallPath")
+        "appearance"           = @("ThemeName", "IconPack", "WindowDec", "ForceMinimal")
+        "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray")
+        "hardening"            = @("PatchExe", "AutoUpdate")
+        "workspace preferences"= @("GuiThemeName", "LanguageCode")
+    }
+
+    $changedAreas = New-Object System.Collections.Generic.List[string]
+    foreach ($area in $areaMap.Keys) {
+        foreach ($key in $areaMap[$area]) {
+            if ($SavedState[$key] -ne $CurrentState[$key]) {
+                $changedAreas.Add($area)
+                break
+            }
+        }
+    }
+
+    return $changedAreas.ToArray()
+}
+
+function Get-WorkspaceComparisonBaseline {
+    if ($script:SavedWorkspaceState) { return $script:SavedWorkspaceState }
+    return $script:InitialWorkspaceState
+}
+
+function Update-WorkspaceState {
+    if ($script:IsBootstrapping) { return }
+    if (-not $FooterSummary -or -not $DashPrefsStateValue -or -not $DashPrefsStateDetail -or -not $DashLastAppliedValue -or -not $BtnRestoreWorkspace) { return }
+
+    $palette = Get-ActivePalette
+    $currentState = Get-NormalizedStateObject -State (Get-CurrentGuiState)
+    $lastAppliedText = Get-LastAppliedDisplayText
+    $DashLastAppliedValue.Text = $lastAppliedText
+    $baselineState = Get-WorkspaceComparisonBaseline
+
+    if (-not $script:SavedWorkspaceState) {
+        $BtnRestoreWorkspace.Enabled = $false
+        $BtnRestoreWorkspace.Text = "Available later"
+        $changedAreas = @(Get-ChangedWorkspaceAreas -SavedState $baselineState -CurrentState $currentState)
+        if ($changedAreas.Count -eq 0) {
+            $FooterSummary.Text = "First run ready. Review the pages, then apply once to save this workspace."
+            $DashPrefsStateValue.Text = "No saved workspace yet"
+            $DashPrefsStateValue.ForeColor = $palette.Accent
+            $DashPrefsStateDetail.Text = "Your selected path, theme, language, and run options will be remembered after the first successful run."
+        } else {
+            $suffix = if ($changedAreas.Count -eq 1) { "" } else { "s" }
+            $FooterSummary.Text = "First run configured in {0} area{1}. Apply once to save this workspace." -f $changedAreas.Count, $suffix
+            $DashPrefsStateValue.Text = "Ready to save first run"
+            $DashPrefsStateValue.ForeColor = $palette.Warning
+            $DashPrefsStateDetail.Text = "Adjusted since launch: {0}. Apply once to make this workspace the new default." -f (Join-ReadableList -Items $changedAreas)
+        }
+        Layout-Footer
+        return
+    }
+
+    $changedAreas = @(Get-ChangedWorkspaceAreas -SavedState $baselineState -CurrentState $currentState)
+    if ($changedAreas.Count -eq 0) {
+        $BtnRestoreWorkspace.Enabled = $false
+        $BtnRestoreWorkspace.Text = "Already current"
+        $FooterSummary.Text = "Workspace matches the last successful run."
+        $DashPrefsStateValue.Text = "Everything is in sync"
+        $DashPrefsStateValue.ForeColor = $palette.Success
+        $DashPrefsStateDetail.Text = "The current workspace already matches the last applied run."
+        Layout-Footer
+        return
+    }
+
+    $BtnRestoreWorkspace.Enabled = $true
+    $BtnRestoreWorkspace.Text = "Restore last run"
+    $suffix = if ($changedAreas.Count -eq 1) { "" } else { "s" }
+    $FooterSummary.Text = "Changes pending in {0} area{1}. Apply when you're ready." -f $changedAreas.Count, $suffix
+    $DashPrefsStateValue.Text = "Changes pending"
+    $DashPrefsStateValue.ForeColor = $palette.Warning
+    $DashPrefsStateDetail.Text = "Updated since the last successful run: {0}." -f (Join-ReadableList -Items $changedAreas)
+    Layout-Footer
+}
+
+function Test-WorkspaceHasPendingChanges {
+    $baselineState = Get-WorkspaceComparisonBaseline
+    if (-not $baselineState) { return $false }
+    $currentState = Get-NormalizedStateObject -State (Get-CurrentGuiState)
+    return (@(Get-ChangedWorkspaceAreas -SavedState $baselineState -CurrentState $currentState).Count -gt 0)
+}
+
+function Apply-AccessibilityMetadata {
+    Set-ControlMetadata -Control $BtnDashboard    -Name "Dashboard navigation"    -Description "Open the dashboard overview page." -TabIndex 0
+    Set-ControlMetadata -Control $BtnInstallation -Name "Installation navigation" -Description "Open installation mode and path settings." -TabIndex 1
+    Set-ControlMetadata -Control $BtnTheme        -Name "Themes navigation"       -Description "Open theme and icon customization options." -TabIndex 2
+    Set-ControlMetadata -Control $BtnBehavior     -Name "Behavior navigation"     -Description "Open download and window behavior settings." -TabIndex 3
+    Set-ControlMetadata -Control $BtnHardening    -Name "Hardening navigation"    -Description "Open the debloat and hardening options page." -TabIndex 4
+    Set-ControlMetadata -Control $BtnRepair       -Name "Repair navigation"       -Description "Open maintenance and recovery tools." -TabIndex 5
+
+    Set-ControlMetadata -Control $CboGuiTheme -Name "Workspace theme" -Description "Choose the visual theme for this manager window." -TabIndex 0
+    Set-ControlMetadata -Control $CboLang     -Name "Workspace language" -Description "Choose the language used inside this manager window." -TabIndex 1
+    Set-ControlMetadata -Control $TxtPath     -Name "JDownloader installation folder" -Description "Enter the folder for the JDownloader installation you want to modify, or leave it blank in clean install mode." -TabIndex 0
+    Set-ControlMetadata -Control $BtnBrowse   -Name "Browse for installation folder" -Description "Open a folder picker for the JDownloader installation folder." -TabIndex 1
+    Set-ControlMetadata -Control $BtnDetect   -Name "Auto-detect installation folder" -Description "Try to locate the current JDownloader installation automatically." -TabIndex 2
+    Set-ControlMetadata -Control $CboMode     -Name "Installation mode" -Description "Choose whether to modify an existing install or run a clean install flow." -TabIndex 0
+
+    Set-ControlMetadata -Control $CboTheme     -Name "Theme preset" -Description "Choose the theme preset that will be applied to JDownloader." -TabIndex 0
+    Set-ControlMetadata -Control $LblThemeLink -Name "Open theme project" -Description "Open the selected theme's GitHub page in your browser." -TabIndex 1
+    Set-ControlMetadata -Control $CboIcons     -Name "Icon pack" -Description "Choose the icon pack that should be layered onto the selected theme." -TabIndex 0
+    Set-ControlMetadata -Control $ChkWinDec    -Name "Custom window decorations" -Description "Enable custom window decorations when the theme supports them." -TabIndex 1
+    Set-ControlMetadata -Control $ChkMinLay    -Name "Compact main tabs" -Description "Use a tighter main tab layout inside JDownloader." -TabIndex 2
+    Set-ControlMetadata -Control $BtnOpenThm   -Name "Open icon folder" -Description "Open the active JDownloader icon folder on disk." -TabIndex 3
+
+    Set-ControlMetadata -Control $NumSim       -Name "Max simultaneous downloads" -Description "Choose the number of downloads that can run at the same time." -TabIndex 0
+    Set-ControlMetadata -Control $NumPause     -Name "Pause speed" -Description "Choose the speed threshold used for the pause behavior." -TabIndex 1
+    Set-ControlMetadata -Control $TxtDl        -Name "Default download folder" -Description "Enter a download folder or leave it blank to reset to JDownloader's default folder." -TabIndex 2
+    Set-ControlMetadata -Control $BtnDl        -Name "Browse for download folder" -Description "Open a folder picker for the default download location." -TabIndex 3
+    Set-ControlMetadata -Control $ChkMin       -Name "Start minimized" -Description "Launch JDownloader in a minimized state." -TabIndex 0
+    Set-ControlMetadata -Control $ChkTray      -Name "Minimize to tray" -Description "Send JDownloader to the system tray when minimized." -TabIndex 1
+    Set-ControlMetadata -Control $ChkCloseTray -Name "Close to tray" -Description "Send JDownloader to the system tray when the close button is used." -TabIndex 2
+
+    Set-ControlMetadata -Control $ChkExe       -Name "Apply dark executable icon" -Description "Replace the executable icon with the darker icon variant." -TabIndex 0
+    Set-ControlMetadata -Control $ChkUpdate    -Name "Run update after completion" -Description "Launch JDownloader's update routine after the selected work finishes." -TabIndex 1
+
+    Set-ControlMetadata -Control $RepairResetCfg.Button   -Name "Reset configuration" -Description "Back up and remove the full configuration folder." -TabIndex 0
+    Set-ControlMetadata -Control $RepairResetTheme.Button -Name "Reset theme assets" -Description "Remove the current theme override files and icon assets." -TabIndex 0
+    Set-ControlMetadata -Control $RepairClearCache.Button -Name "Clear cache" -Description "Delete temporary cache files and leftover logs." -TabIndex 0
+    Set-ControlMetadata -Control $RepairAudit.Button      -Name "Run health audit" -Description "Check the installation for missing or damaged configuration files." -TabIndex 0
+    Set-ControlMetadata -Control $RepairSafe.Button       -Name "Launch safe mode" -Description "Start JDownloader in safe mode for troubleshooting." -TabIndex 0
+    Set-ControlMetadata -Control $RepairUninstall.Button  -Name "Full uninstall" -Description "Remove JDownloader from the selected install folder." -TabIndex 0
+
+    Set-ControlMetadata -Control $BtnExec      -Name "Apply selected changes" -Description "Run the selected installation, theme, behavior, hardening, and repair operations." -TabIndex 0
+    Set-ControlMetadata -Control $BtnRestoreWorkspace -Name "Restore last run" -Description "Restore the last successful workspace selections and discard pending edits." -TabIndex 2
+    Set-ControlMetadata -Control $ProgressBar  -Name "Operation progress" -Description "Shows progress while selected changes are being applied."
+    Set-ControlMetadata -Control $StatusLabel  -Name "Status updates" -Description "Shows the latest status and completion messages."
+    Set-ControlMetadata -Control $DashLastAppliedValue -Name "Last successful run" -Description "Shows when the last successful apply run completed."
+    Set-ControlMetadata -Control $DashPrefsStateValue -Name "Workspace status" -Description "Shows whether the current selections match the last successful run."
+}
 
 # --- Themes Page ---
-$curY = $padY
-$ThemeTitle = New-Label -Parent $PageTheme -LangKey "ThemeTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
-$curY += $ThemeTitle.Height + $gapSmall
-$ThemeSub = New-Label -Parent $PageTheme -LangKey "ThemeSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
-$curY += $ThemeSub.Height + $gapMed
+$ThemeHeader = New-Surface -Parent $ThemeCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 148))
+$ThemeTitle = New-Label -Parent $ThemeHeader -LangKey "ThemeTitle" -Location (New-Object System.Drawing.Point(24, 22)) -Tag "SectionHeader"
+$ThemeSub = New-Label -Parent $ThemeHeader -LangKey "ThemeSub" -Location (New-Object System.Drawing.Point(24, 58)) -Size (New-Object System.Drawing.Size(600, 44)) -AutoSize $false -Tag "SubHeader"
+$LblThm = New-Label -Parent $ThemeHeader -LangKey "ThemePreset" -Location (New-Object System.Drawing.Point(24, 112))
+$CboTheme = New-ComboBox -Parent $ThemeHeader -Location (New-Object System.Drawing.Point(148, 108)) -Size (New-Object System.Drawing.Size(280, 36)) -Tag "Input" -Items $ThemeDefinitions.Keys
+$LblPreDesc = New-Label -Parent $ThemeHeader -Text "" -Location (New-Object System.Drawing.Point(454, 110)) -Size (New-Object System.Drawing.Size(380, 34)) -AutoSize $false -Tag "BodyMuted"
+$LblThemeLink = New-Object System.Windows.Forms.LinkLabel
+$LblThemeLink.Location = New-Object System.Drawing.Point(856, 114)
+$LblThemeLink.AutoSize = $true
+$LblThemeLink.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Underline)
+[void]$ThemeHeader.Controls.Add($LblThemeLink)
+Register-LangControl -Control $LblThemeLink -Key "OpenGithub"
 
-$LblThm = New-Label -Parent $PageTheme -LangKey "ThemePreset" -Location (New-Object System.Drawing.Point($padX,$curY))
-$curY += $LblThm.Height + 5
-$CboTheme = New-ComboBox -Parent $PageTheme -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(400, $inputH)) -Tag "Input" -Items $ThemeDefinitions.Keys
-
-$LblPreDesc = New-Label -Parent $PageTheme -Location (New-Object System.Drawing.Point([int]($padX + 420),$curY)) -Size (New-Object System.Drawing.Size(450,40)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right)
-
-$LblThemeLink = New-Object System.Windows.Forms.LinkLabel; 
-$LblThemeLink.Text = $Lang.OpenGithub; 
-$LblThemeLink.Location = New-Object System.Drawing.Point(880,[int]($curY+5)); 
-$LblThemeLink.AutoSize = $true; 
-$LblThemeLink.Font = New-Object System.Drawing.Font("Segoe UI", 12)
-$LblThemeLink.LinkColor = "DeepSkyBlue"; 
-$LblThemeLink.ActiveLinkColor = "DodgerBlue";
-$LblThemeLink.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
-[void]$PageTheme.Controls.Add($LblThemeLink); 
-$LblThemeLink.Add_LinkClicked({ if ($LblThemeLink.Tag) { Start-Process $LblThemeLink.Tag | Out-Null } })
-
-$curY += $inputH + $gapMed
-
-# Resizable anchored preview panel - Moved further down for breathing room
-$PnlPreview = New-Panel -Name "PnlPreview" -Parent $PageTheme -Tag "PreviewPanel" -Location (New-Object System.Drawing.Point($padX,$curY))
-$PnlPreview.BorderStyle = "FixedSingle"
-$PnlPreview.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
-
+$PnlPreview = New-Surface -Name "PnlPreview" -Parent $ThemeCanvas -Location (New-Object System.Drawing.Point(0, 172)) -Size (New-Object System.Drawing.Size(658, 488)) -Tag "PreviewPanel"
 $PicThemePreview = New-Object System.Windows.Forms.PictureBox
-$PicThemePreview.Dock = "Fill"
+$PicThemePreview.Location = New-Object System.Drawing.Point(24, 24)
+$PicThemePreview.Size = New-Object System.Drawing.Size(610, 440)
 $PicThemePreview.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
 [void]$PnlPreview.Controls.Add($PicThemePreview)
+$LblPreviewState = New-Label -Parent $PnlPreview -Text "Preview is loading in the background." -Location (New-Object System.Drawing.Point(48, 214)) -Size (New-Object System.Drawing.Size(562, 42)) -AutoSize $false -Tag "BodyMuted"
+$LblPreviewState.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 
-# Anchored Bottom Controls for Theme Page - Taller to fit large controls
-[int]$BottomPanelH = 140
-$BottomPanel = New-Panel -Parent $PageTheme -Dock "Bottom" -Size (New-Object System.Drawing.Size(100, $BottomPanelH)) -BackColor ([System.Drawing.Color]::Transparent)
-
-$ChkWinDec = New-CheckBox -Parent $BottomPanel -LangKey "EnableWinDec" -Location (New-Object System.Drawing.Point($padX,20)) -Checked $true
-$ChkMinLay = New-CheckBox -Parent $BottomPanel -LangKey "CompactTabs" -Location (New-Object System.Drawing.Point($padX,60))
-$LblIco = New-Label -Parent $BottomPanel -LangKey "IconPack" -Location (New-Object System.Drawing.Point([int]($padX + 400),20))
-$CboIcons = New-ComboBox -Parent $BottomPanel -Location (New-Object System.Drawing.Point([int]($padX + 400),55)) -Size (New-Object System.Drawing.Size(220, $inputH)) -Tag "Input" -Items $IconDefinitions.Keys
-
-$BtnOpenThm = New-Button -Parent $BottomPanel -LangKey "OpenIconFolder" -Location (New-Object System.Drawing.Point([int]($padX + 640),54)) -Size (New-Object System.Drawing.Size(180,[int]($inputH+2))) -Tag "NavButton"
-$BtnOpenThm.Add_Click({ $p = "$($TxtPath.Text)\themes\standard\org\jdownloader\images"; if (Test-Path $p) { Invoke-Item $p } })
+$ThemeOptions = New-Surface -Parent $ThemeCanvas -Location (New-Object System.Drawing.Point(680, 172)) -Size (New-Object System.Drawing.Size(360, 488)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $ThemeOptions -Text "Appearance options" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $ThemeOptions -Text "Choose the supporting icon pack and decide how minimal you want the final JDownloader shell to feel." -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(312, 52)) -AutoSize $false -Tag "BodyMuted")
+$LblIco = New-Label -Parent $ThemeOptions -LangKey "IconPack" -Location (New-Object System.Drawing.Point(24, 126))
+$CboIcons = New-ComboBox -Parent $ThemeOptions -Location (New-Object System.Drawing.Point(24, 154)) -Size (New-Object System.Drawing.Size(312, 36)) -Tag "Input" -Items $IconDefinitions.Keys
+$ChkWinDec = New-CheckBox -Parent $ThemeOptions -LangKey "EnableWinDec" -Location (New-Object System.Drawing.Point(24, 220)) -Checked $true
+$ChkMinLay = New-CheckBox -Parent $ThemeOptions -LangKey "CompactTabs" -Location (New-Object System.Drawing.Point(24, 258))
+[void](New-Label -Parent $ThemeOptions -Text "Theme previews can keep loading while you continue configuring the rest of the tool." -Location (New-Object System.Drawing.Point(24, 298)) -Size (New-Object System.Drawing.Size(312, 36)) -AutoSize $false -Tag "BodyMuted")
+$BtnOpenThm = New-Button -Parent $ThemeOptions -LangKey "OpenIconFolder" -Location (New-Object System.Drawing.Point(24, 352)) -Size (New-Object System.Drawing.Size(220, 36)) -Tag "SecondaryButton"
 
 function Resize-ThemePreview {
-    # Logic to prevent overlapping and stretching
-    if ($Form.WindowState -eq "Minimized") { return }
-    $topMargin = $PnlPreview.Location.Y # Dynamic top
-    $botMargin = $BottomPanel.Height # Dynamic bottom reference
-    $availH = $PageTheme.ClientSize.Height - $topMargin - $botMargin - 30
-    
-    if ($availH -lt 150) { $availH = 150 }
-    
-    $PnlPreview.Height = $availH
+    if (-not $PnlPreview) { return }
+    $PicThemePreview.Size = New-Object System.Drawing.Size([Math]::Max(120, $PnlPreview.Width - 48), [Math]::Max(120, $PnlPreview.Height - 48))
+    $LblPreviewState.Location = New-Object System.Drawing.Point(36, [Math]::Max(80, [int](($PnlPreview.Height - $LblPreviewState.Height) / 2)))
+    $LblPreviewState.Size = New-Object System.Drawing.Size([Math]::Max(160, $PnlPreview.Width - 72), 42)
 }
 
 function Update-ThemePreview {
-    $sel = $ThemeDefinitions[$CboTheme.Text]
-    if ($sel) {
-        $LblPreDesc.Text = "$($sel.DisplayName) - $($sel.Desc)"
-        $LblThemeLink.Tag = $sel.ThemeUrl
-        if ($ThemeImageCache.ContainsKey($CboTheme.Text) -and $ThemeImageCache[$CboTheme.Text]) {
-            if ($PicThemePreview.IsHandleCreated) {
-                 $PicThemePreview.Invoke([Action]{
-                    $PicThemePreview.Image = $ThemeImageCache[$CboTheme.Text]
-                    $PicThemePreview.Refresh()
-                })
-            } else {
-                 $PicThemePreview.Image = $ThemeImageCache[$CboTheme.Text]
-            }
-        } else {
-            $PicThemePreview.Image = $null
-        }
+    $selection = $ThemeDefinitions[$CboTheme.Text]
+    if (-not $selection) { return }
+    $LblPreDesc.Text = $selection.Desc
+    $LblThemeLink.Tag = $selection.ThemeUrl
+    if ($ThemeImageCache.ContainsKey($CboTheme.Text) -and $ThemeImageCache[$CboTheme.Text]) {
+        $PicThemePreview.Image = $ThemeImageCache[$CboTheme.Text]
+        $LblPreviewState.Visible = $false
+    } else {
+        $PicThemePreview.Image = $null
+        $LblPreviewState.Text = if ($selection.PreviewUrl) { "Preview is still loading. You can keep configuring icons and layout options in the meantime." } else { "No preview is available for this theme yet." }
+        $LblPreviewState.Visible = $true
     }
 }
-$CboTheme.Add_SelectedIndexChanged({ Update-ThemePreview })
 
 # --- Behavior Page ---
-$curY = $padY
-$BehTitle = New-Label -Parent $PageBehavior -LangKey "BehTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
-$curY += $BehTitle.Height + $gapSmall
-$BehSub = New-Label -Parent $PageBehavior -LangKey "BehSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
-$curY += $BehSub.Height + $gapLarge
+$BehHero = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 156))
+$BehTitle = New-Label -Parent $BehHero -LangKey "BehTitle" -Location (New-Object System.Drawing.Point(24, 24)) -Tag "SectionHeader"
+$BehSub = New-Label -Parent $BehHero -LangKey "BehSub" -Location (New-Object System.Drawing.Point(24, 60)) -Size (New-Object System.Drawing.Size(690, 40)) -AutoSize $false -Tag "SubHeader"
+[void](New-Label -Parent $BehHero -Text "These settings become part of the final JDownloader profile the moment you apply operations." -Location (New-Object System.Drawing.Point(780, 34)) -Size (New-Object System.Drawing.Size(214, 52)) -AutoSize $false -Tag "BodyMuted")
 
-$LblSim = New-Label -Parent $PageBehavior -LangKey "MaxSim" -Location (New-Object System.Drawing.Point($padX,$curY))
-$NumSim = New-NumericUpDown -Parent $PageBehavior -Location (New-Object System.Drawing.Point([int]($padX + 300),[int]($curY-2))) -Min 1 -Max 20 -Value 3 -Tag "Input"
-$curY += $inputH
-$LblSimHelp = New-Label -Parent $PageBehavior -LangKey "MaxSimHelp" -Location (New-Object System.Drawing.Point($padX,$curY)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
-$curY += $LblSimHelp.Height + $gapMed
+$BehMain = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(0, 180)) -Size (New-Object System.Drawing.Size(640, 344))
+[void](New-Label -Parent $BehMain -Text "Download defaults" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+$LblSim = New-Label -Parent $BehMain -LangKey "MaxSim" -Location (New-Object System.Drawing.Point(24, 74))
+$NumSim = New-NumericUpDown -Parent $BehMain -Location (New-Object System.Drawing.Point(412, 70)) -Min 1 -Max 20 -Value 3 -Tag "Input"
+$LblSimHelp = New-Label -Parent $BehMain -LangKey "MaxSimHelp" -Location (New-Object System.Drawing.Point(24, 100)) -Size (New-Object System.Drawing.Size(520, 34)) -AutoSize $false -Tag "BodyMuted"
+$LblPau = New-Label -Parent $BehMain -LangKey "PauseSpeed" -Location (New-Object System.Drawing.Point(24, 150))
+$NumPause = New-NumericUpDown -Parent $BehMain -Location (New-Object System.Drawing.Point(412, 146)) -Min 0 -Max 1000000 -Value 10240 -Tag "Input"
+$LblPauHelp = New-Label -Parent $BehMain -LangKey "PauseHelp" -Location (New-Object System.Drawing.Point(24, 176)) -Size (New-Object System.Drawing.Size(520, 34)) -AutoSize $false -Tag "BodyMuted"
+$LblDl = New-Label -Parent $BehMain -LangKey "DefDlFolder" -Location (New-Object System.Drawing.Point(24, 228))
+$TxtDl = New-TextBox -Parent $BehMain -Location (New-Object System.Drawing.Point(24, 256)) -Size (New-Object System.Drawing.Size(476, 36)) -Tag "Input"
+$BtnDl = New-Button -Parent $BehMain -LangKey "Browse" -Location (New-Object System.Drawing.Point(512, 256)) -Size (New-Object System.Drawing.Size(104, 34)) -Tag "SecondaryButton"
+$LblDownloadState = New-Label -Parent $BehMain -Text "This folder becomes the new default location for downloads." -Location (New-Object System.Drawing.Point(24, 298)) -Size (New-Object System.Drawing.Size(592, 24)) -AutoSize $false -Tag "BodyMuted"
 
-$LblPau = New-Label -Parent $PageBehavior -LangKey "PauseSpeed" -Location (New-Object System.Drawing.Point($padX,$curY))
-$NumPause = New-NumericUpDown -Parent $PageBehavior -Location (New-Object System.Drawing.Point([int]($padX + 300),[int]($curY-2))) -Min 0 -Max 1000000 -Value 10240 -Tag "Input"
-$curY += $inputH
-$LblPauHelp = New-Label -Parent $PageBehavior -LangKey "PauseHelp" -Location (New-Object System.Drawing.Point($padX,$curY)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
-$curY += $LblPauHelp.Height + $gapMed
-
-$LblDl = New-Label -Parent $PageBehavior -LangKey "DefDlFolder" -Location (New-Object System.Drawing.Point($padX,$curY))
-$curY += $LblDl.Height + 5
-$TxtDl = New-TextBox -Parent $PageBehavior -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(600,$inputH)) -Tag "Input" -Text "C:\Downloads" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right)
-$BtnDl = New-Button -Parent $PageBehavior -LangKey "Browse" -Location (New-Object System.Drawing.Point(640,[int]($curY-1))) -Size (New-Object System.Drawing.Size(120,[int]($inputH+2))) -Tag "NavButton" -Anchor ([System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right)
-$BtnDl.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtDl.Text = $fbd.SelectedPath } })
-
-$curY += $inputH + $gapLarge
-
-$ChkMin = New-CheckBox -Parent $PageBehavior -LangKey "StartMin" -Location (New-Object System.Drawing.Point($padX,$curY))
-$curY += 30 + $gapSmall
-$ChkTray = New-CheckBox -Parent $PageBehavior -LangKey "MinToTray" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
-$curY += 30 + $gapSmall
-$ChkCloseTray = New-CheckBox -Parent $PageBehavior -LangKey "CloseToTray" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
+$BehTray = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(662, 180)) -Size (New-Object System.Drawing.Size(378, 344)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $BehTray -Text "Window behavior" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $BehTray -Text "Keep the app available without interrupting your desktop workflow." -Location (New-Object System.Drawing.Point(24, 50)) -Size (New-Object System.Drawing.Size(320, 34)) -AutoSize $false -Tag "BodyMuted")
+$ChkMin = New-CheckBox -Parent $BehTray -LangKey "StartMin" -Location (New-Object System.Drawing.Point(24, 106))
+$ChkTray = New-CheckBox -Parent $BehTray -LangKey "MinToTray" -Location (New-Object System.Drawing.Point(24, 144)) -Checked $true
+$ChkCloseTray = New-CheckBox -Parent $BehTray -LangKey "CloseToTray" -Location (New-Object System.Drawing.Point(24, 182)) -Checked $true
+[void](New-Label -Parent $BehTray -Text "Recommended: keep tray behavior enabled if JDownloader runs in the background most of the time." -Location (New-Object System.Drawing.Point(24, 232)) -Size (New-Object System.Drawing.Size(320, 50)) -AutoSize $false -Tag "BodyMuted")
 
 # --- Hardening Page ---
-$curY = $padY
-$HardTitle = New-Label -Parent $PageHardening -LangKey "HardTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
-$curY += $HardTitle.Height + $gapSmall
-$HardSub = New-Label -Parent $PageHardening -LangKey "HardSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
-$curY += $HardSub.Height + $gapLarge
+$HardHero = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 156))
+$HardTitle = New-Label -Parent $HardHero -LangKey "HardTitle" -Location (New-Object System.Drawing.Point(24, 24)) -Tag "SectionHeader"
+$HardSub = New-Label -Parent $HardHero -LangKey "HardSub" -Location (New-Object System.Drawing.Point(24, 60)) -Size (New-Object System.Drawing.Size(650, 40)) -AutoSize $false -Tag "SubHeader"
+[void](New-Label -Parent $HardHero -Text "The goal here is a quieter, less promotional, more trustworthy default JDownloader shell." -Location (New-Object System.Drawing.Point(780, 34)) -Size (New-Object System.Drawing.Size(214, 52)) -AutoSize $false -Tag "BodyMuted")
 
-$ChkExe = New-CheckBox -Parent $PageHardening -LangKey "DarkExe" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
-$curY += 30 + $gapMed
+$HardControls = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 180)) -Size (New-Object System.Drawing.Size(640, 228))
+[void](New-Label -Parent $HardControls -Text "Optional finishing passes" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+$ChkExe = New-CheckBox -Parent $HardControls -LangKey "DarkExe" -Location (New-Object System.Drawing.Point(24, 84)) -Checked $true
+[void](New-Label -Parent $HardControls -Text "Replaces the executable icon so the shell looks more at home with darker setups." -Location (New-Object System.Drawing.Point(48, 110)) -Size (New-Object System.Drawing.Size(544, 32)) -AutoSize $false -Tag "BodyMuted")
+$ChkUpdate = New-CheckBox -Parent $HardControls -LangKey "RunUpdate" -Location (New-Object System.Drawing.Point(24, 156)) -Checked $true
+[void](New-Label -Parent $HardControls -Text "Launches JDownloader's update routine once configuration work finishes." -Location (New-Object System.Drawing.Point(48, 182)) -Size (New-Object System.Drawing.Size(544, 24)) -AutoSize $false -Tag "BodyMuted")
 
-$ChkUpdate = New-CheckBox -Parent $PageHardening -LangKey "RunUpdate" -Location (New-Object System.Drawing.Point($padX,$curY)) -Checked $true
-$curY += 30 + $gapLarge
+$HardAlways = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(662, 180)) -Size (New-Object System.Drawing.Size(378, 228)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $HardAlways -Text "Always applied cleanup" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $HardAlways -Text "Contribute panel" -Location (New-Object System.Drawing.Point(24, 74)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+[void](New-Label -Parent $HardAlways -Text "Promotional banners" -Location (New-Object System.Drawing.Point(24, 106)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+[void](New-Label -Parent $HardAlways -Text "Premium and MyJD prompts" -Location (New-Object System.Drawing.Point(24, 138)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+[void](New-Label -Parent $HardAlways -Text "These are disabled by default so the final interface feels calmer and less cluttered." -Location (New-Object System.Drawing.Point(24, 174)) -Size (New-Object System.Drawing.Size(320, 32)) -AutoSize $false -Tag "BodyMuted")
 
-$HardNote = New-Label -Parent $PageHardening -LangKey "HardNote" -Location (New-Object System.Drawing.Point($padX,$curY)) -Size (New-Object System.Drawing.Size(800,80)) -Font (New-Object System.Drawing.Font("Segoe UI",14)) -Tag "SubHeader"
+$HardNoteSurface = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 432)) -Size (New-Object System.Drawing.Size(1040, 144))
+[void](New-Label -Parent $HardNoteSurface -Text "Result" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+$HardNote = New-Label -Parent $HardNoteSurface -LangKey "HardNote" -Location (New-Object System.Drawing.Point(24, 56)) -Size (New-Object System.Drawing.Size(972, 56)) -AutoSize $false -Tag "BodyMuted"
 
 # --- Repair Page ---
-$curY = $padY
-$RepTitle = New-Label -Parent $PageRepair -LangKey "RepTitle" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SectionHeader"
-$curY += $RepTitle.Height + $gapSmall
-$RepSub = New-Label -Parent $PageRepair -LangKey "RepSub" -Location (New-Object System.Drawing.Point($padX,$curY)) -Tag "SubHeader"
-$curY += $RepSub.Height + $gapLarge
+$RepairHero = New-Surface -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 160))
+$RepTitle = New-Label -Parent $RepairHero -LangKey "RepTitle" -Location (New-Object System.Drawing.Point(24, 24)) -Tag "SectionHeader"
+$RepSub = New-Label -Parent $RepairHero -LangKey "RepSub" -Location (New-Object System.Drawing.Point(24, 60)) -Size (New-Object System.Drawing.Size(650, 40)) -AutoSize $false -Tag "SubHeader"
+[void](New-Label -Parent $RepairHero -Text "Most actions below stop JDownloader first. Destructive actions ask for confirmation before they continue." -Location (New-Object System.Drawing.Point(760, 34)) -Size (New-Object System.Drawing.Size(236, 52)) -AutoSize $false -Tag "BodyMuted")
 
-# Repair Grid Logic
-[int]$gridX1 = $padX
-[int]$gridX2 = $padX + 280
-[int]$gridX3 = $padX + 560
-[int]$gridRow1 = $curY
-[int]$gridRow2 = $curY + 70 # Button Height + Gap
-
-function New-RepairBtn {
-    param($LangKey, $x, $y, $Tag, $act)
-    return New-Button -Parent $PageRepair -LangKey $LangKey -Location (New-Object System.Drawing.Point([int]$x, [int]$y)) -Size (New-Object System.Drawing.Size(260, 55)) -Tag $Tag -Click $act
+function Show-ActionPrompt {
+    param([string]$Title, [string]$Message, [string]$ConfirmText = "Continue", [string]$ConfirmTag = "PrimaryButton")
+    $pal = Get-ActivePalette
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = $Title
+    $dlg.Size = New-Object System.Drawing.Size(520, 280)
+    $dlg.MinimumSize = $dlg.Size
+    $dlg.StartPosition = "CenterParent"
+    $dlg.FormBorderStyle = "FixedDialog"
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+    $dlg.BackColor = $pal.FormBack
+    $dlg.ForeColor = $pal.Fore
+    $dlg.AutoScaleMode = "Dpi"
+    $body = New-Surface -Parent $dlg -Location (New-Object System.Drawing.Point(16, 16)) -Size (New-Object System.Drawing.Size(472, 174))
+    [void](New-Label -Parent $body -Text $Title -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold)))
+    [void](New-Label -Parent $body -Text $Message -Location (New-Object System.Drawing.Point(24, 58)) -Size (New-Object System.Drawing.Size(424, 82)) -AutoSize $false -Tag "BodyMuted")
+    $btnConfirm = New-Button -Parent $dlg -Text $ConfirmText -Location (New-Object System.Drawing.Point(16, 206)) -Size (New-Object System.Drawing.Size(188, 36)) -Tag $ConfirmTag
+    $btnConfirm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $btnCancel = New-Button -Parent $dlg -Text (Get-LangValue -Key "Cancel" -Fallback "Cancel") -Location (New-Object System.Drawing.Point(218, 206)) -Size (New-Object System.Drawing.Size(120, 36)) -Tag "SecondaryButton"
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $dlg.AcceptButton = $btnConfirm
+    $dlg.CancelButton = $btnCancel
+    Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $dlg
+    return ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK)
 }
 
-New-RepairBtn "BtnResetCfg" $gridX1 $gridRow1 "DangerButton" { if ([System.Windows.Forms.MessageBox]::Show("Close JDownloader and delete the 'cfg' folder?","Confirm","YesNo") -eq "Yes") { Kill-JDownloader; Backup-JD -InstallPath $TxtPath.Text; Remove-Item "$($TxtPath.Text)\cfg" -Recurse -Force -ErrorAction SilentlyContinue } } | Out-Null
-New-RepairBtn "BtnResetThm" $gridX2 $gridRow1 "NavButton" { if ([System.Windows.Forms.MessageBox]::Show("Reset theme and icons?","Confirm","YesNo") -eq "Yes") { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\cfg\laf" -Recurse -Force; Remove-Item "$($TxtPath.Text)\themes\standard\org\jdownloader\images\*" -Recurse -Force } } | Out-Null
-New-RepairBtn "BtnClearCache" $gridX3 $gridRow1 "NavButton" { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\tmp\*" -Recurse -Force; Remove-Item "$($TxtPath.Text)\cfg\*.cache" -Force } | Out-Null
+function Ensure-InstallPathSelected {
+    param([switch]$RequireExecutable)
+    if ([string]::IsNullOrWhiteSpace($TxtPath.Text)) {
+        Focus-InstallPath
+        Log-Status "Select a JDownloader folder before using repair tools." "WARN"
+        [System.Windows.Forms.MessageBox]::Show((Get-LangValue -Key "PathRequiredBody" -Fallback "Choose a JDownloader folder first."), (Get-LangValue -Key "PathRequiredTitle" -Fallback "Path required"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        return $false
+    }
+    if ($RequireExecutable -and -not (Test-Path "$($TxtPath.Text)\JDownloader2.exe")) {
+        Focus-InstallPath
+        Log-Status "Point the tool at a valid JDownloader installation before continuing." "WARN"
+        [System.Windows.Forms.MessageBox]::Show((Get-LangValue -Key "InstallRequiredBody" -Fallback "Point the tool at a valid JDownloader installation first."), (Get-LangValue -Key "InstallRequiredTitle" -Fallback "Installation required"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        return $false
+    }
+    return $true
+}
 
-New-RepairBtn "BtnAudit" $gridX1 $gridRow2 "SuccessButton" { Run-Audit -InstallPath $TxtPath.Text } | Out-Null
-New-RepairBtn "BtnSafe" $gridX2 $gridRow2 "SuccessButton" { Start-Process "$($TxtPath.Text)\JDownloader2.exe" -ArgumentList "-safe" } | Out-Null
-New-RepairBtn "BtnUninstall" $gridX3 $gridRow2 "DangerButton" { if ([System.Windows.Forms.MessageBox]::Show("Full Uninstall?","Confirm","YesNo") -eq "Yes") { Task-FullUninstall -InstallPath $TxtPath.Text } } | Out-Null
+$RepairResetCfg = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 184)) -Title "Factory reset" -Description "Back up and remove the full cfg folder to return JDownloader to a clean starting point." -ButtonText "Reset configuration" -ButtonTag "DangerButton" -Action { if ((Ensure-InstallPathSelected) -and (Show-ActionPrompt -Title "Reset configuration" -Message "This closes JDownloader, backs up the current configuration, and removes the cfg folder. Downloads remain on disk." -ConfirmText "Reset configuration" -ConfirmTag "DangerButton")) { Kill-JDownloader; Backup-JD -InstallPath $TxtPath.Text; Remove-Item "$($TxtPath.Text)\cfg" -Recurse -Force -ErrorAction SilentlyContinue; Log-Status "Configuration reset completed." "SUCCESS" } }
+$RepairResetTheme = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(354, 184)) -Title "Theme reset" -Description "Strip theme overrides and custom icons without touching the rest of the installation." -ButtonText "Reset theme only" -ButtonTag "SecondaryButton" -Action { if ((Ensure-InstallPathSelected) -and (Show-ActionPrompt -Title "Reset theme assets" -Message "This removes the custom look-and-feel files and current icon overrides so you can start fresh." -ConfirmText "Reset theme assets" -ConfirmTag "PrimaryButton")) { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\cfg\laf" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item "$($TxtPath.Text)\themes\standard\org\jdownloader\images\*" -Recurse -Force -ErrorAction SilentlyContinue; Log-Status "Theme and icon overrides were cleared." "SUCCESS" } }
+$RepairClearCache = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(708, 184)) -Title "Cache cleanup" -Description "Delete temporary files, logs, and cache fragments that commonly linger after broken runs." -ButtonText "Clear cache" -ButtonTag "SecondaryButton" -Action { if (Ensure-InstallPathSelected) { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\tmp\*" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item "$($TxtPath.Text)\cfg\*.cache" -Force -ErrorAction SilentlyContinue; Log-Status "Temporary cache files were cleared." "SUCCESS" } }
+$RepairAudit = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 372)) -Title "Health audit" -Description "Check for missing or corrupted configuration files before you commit to a larger repair step." -ButtonText "Run health audit" -ButtonTag "SuccessButton" -Action { if (Ensure-InstallPathSelected) { Run-Audit -InstallPath $TxtPath.Text } }
+$RepairSafe = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(354, 372)) -Title "Safe mode launch" -Description "Start JDownloader with a reduced profile for troubleshooting unstable themes or config changes." -ButtonText "Launch safe mode" -ButtonTag "SuccessButton" -Action { if (Ensure-InstallPathSelected -RequireExecutable) { Start-Process "$($TxtPath.Text)\JDownloader2.exe" -ArgumentList "-safe"; Log-Status "JDownloader launched in safe mode." "SUCCESS" } }
+$RepairUninstall = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(708, 372)) -Title "Full uninstall" -Description "Remove the application entirely when you need to start over from a clean machine state." -ButtonText "Full uninstall" -ButtonTag "DangerButton" -Action { if ((Ensure-InstallPathSelected) -and (Show-ActionPrompt -Title "Full uninstall" -Message "This removes JDownloader from the selected folder. Use it only when you want to wipe the install completely." -ConfirmText "Uninstall JDownloader" -ConfirmTag "DangerButton")) { Task-FullUninstall -InstallPath $TxtPath.Text; Log-Status "Full uninstall finished." "SUCCESS" } }
+
+function Update-ModeSummary {
+    switch ($CboMode.SelectedIndex) {
+        1 { $InstallModeSummaryTitle.Text = "Clean install from GitHub"; $LblModeHelp.Text = "Downloads the GitHub installer automatically, then applies the options you selected in this workspace."; $DashModeDetail.Text = "Clean install using GitHub assets" }
+        2 { $InstallModeSummaryTitle.Text = "Manual Mega fallback"; $LblModeHelp.Text = "Opens the Mega page for manual download, then continues once the installer is available locally."; $DashModeDetail.Text = "Clean install using manual Mega download" }
+        default { $InstallModeSummaryTitle.Text = "Modify an existing install"; $LblModeHelp.Text = "Use this when JDownloader is already present and you want to refine its configuration in place."; $DashModeDetail.Text = "Modify current installation" }
+    }
+}
+
+function Update-PathState {
+    $palette = Get-ActivePalette
+    $path = $TxtPath.Text.Trim()
+    $pathExists = -not [string]::IsNullOrWhiteSpace($path) -and (Test-Path $path)
+    $hasExe = $pathExists -and (Test-Path (Join-Path $path "JDownloader2.exe"))
+    if ($CboMode.SelectedIndex -eq 0) {
+        if ([string]::IsNullOrWhiteSpace($path)) { $LblPathState.Text = "Modify mode needs an existing JDownloader folder."; $LblPathState.ForeColor = $palette.Warning; $DashInstallStatus.Text = "Path needed"; $DashInstallDetail.Text = "Select the existing installation you want to refine."; $InstallBadge.Text = "Modify mode"; $InstallBadge.ForeColor = $palette.Warning; $TxtPath.BackColor = $palette.InputBack }
+        elseif ($hasExe) { $LblPathState.Text = "Ready. JDownloader was found at this location."; $LblPathState.ForeColor = $palette.Success; $DashInstallStatus.Text = "Install detected"; $DashInstallDetail.Text = $path; $InstallBadge.Text = "Existing install found"; $InstallBadge.ForeColor = $palette.Success; $TxtPath.BackColor = [System.Windows.Forms.ControlPaint]::Light($palette.Success, 0.85) }
+        elseif ($pathExists) { $LblPathState.Text = "The folder exists, but JDownloader2.exe was not found there."; $LblPathState.ForeColor = $palette.Warning; $DashInstallStatus.Text = "Folder found"; $DashInstallDetail.Text = "Switch to clean install mode or point to the correct install."; $InstallBadge.Text = "Check folder"; $InstallBadge.ForeColor = $palette.Warning; $TxtPath.BackColor = [System.Windows.Forms.ControlPaint]::Light($palette.Warning, 0.82) }
+        else { $LblPathState.Text = "That folder does not exist yet."; $LblPathState.ForeColor = $palette.Danger; $DashInstallStatus.Text = "Path not found"; $DashInstallDetail.Text = "Use Browse or Auto-Detect to pick a valid installation."; $InstallBadge.Text = "Invalid path"; $InstallBadge.ForeColor = $palette.Danger; $TxtPath.BackColor = [System.Windows.Forms.ControlPaint]::Light($palette.Danger, 0.82) }
+    } else {
+        if ([string]::IsNullOrWhiteSpace($path)) { $LblPathState.Text = "Clean install can start without a path. The app will detect JDownloader after install completes."; $LblPathState.ForeColor = $palette.MutedStrong; $DashInstallStatus.Text = "Clean install ready"; $DashInstallDetail.Text = "No existing path is required for this flow."; $InstallBadge.Text = "Fresh install"; $InstallBadge.ForeColor = $palette.Accent; $TxtPath.BackColor = $palette.InputBack }
+        elseif ($hasExe) { $LblPathState.Text = "An existing JDownloader install is already present here. You can still continue with clean install if you want to replace it."; $LblPathState.ForeColor = $palette.Warning; $DashInstallStatus.Text = "Existing install present"; $DashInstallDetail.Text = $path; $InstallBadge.Text = "Install already present"; $InstallBadge.ForeColor = $palette.Warning; $TxtPath.BackColor = [System.Windows.Forms.ControlPaint]::Light($palette.Warning, 0.82) }
+        elseif ($pathExists) { $LblPathState.Text = "Folder exists and can be used as a reference point while the installer finishes."; $LblPathState.ForeColor = $palette.MutedStrong; $DashInstallStatus.Text = "Folder selected"; $DashInstallDetail.Text = "JDownloader will be detected after the install phase."; $InstallBadge.Text = "Clean install"; $InstallBadge.ForeColor = $palette.Accent; $TxtPath.BackColor = $palette.InputBack }
+        else { $LblPathState.Text = "This folder does not exist yet, but clean install mode can still continue."; $LblPathState.ForeColor = $palette.MutedStrong; $DashInstallStatus.Text = "Clean install ready"; $DashInstallDetail.Text = "The installer will decide the final install location."; $InstallBadge.Text = "Fresh install"; $InstallBadge.ForeColor = $palette.Accent; $TxtPath.BackColor = $palette.InputBack }
+    }
+    $TxtPath.ForeColor = $palette.Fore
+}
+
+function Update-DownloadFolderState {
+    $palette = Get-ActivePalette
+    $folder = $TxtDl.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($folder)) {
+        $LblDownloadState.Text = "Leave this blank to reset the download folder back to JDownloader's default."
+        $LblDownloadState.ForeColor = $palette.MutedStrong
+        $TxtDl.BackColor = $palette.InputBack
+        $TxtDl.ForeColor = $palette.Fore
+        return
+    }
+    if (Test-Path $folder) {
+        $LblDownloadState.Text = "Ready. Files will download here by default."
+        $LblDownloadState.ForeColor = $palette.Success
+        $TxtDl.BackColor = [System.Windows.Forms.ControlPaint]::Light($palette.Success, 0.85)
+        $TxtDl.ForeColor = $palette.Fore
+        return
+    }
+    $parent = Split-Path $folder -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and (Test-Path $parent)) {
+        $LblDownloadState.Text = "This folder will be created the first time JDownloader writes to it."
+        $LblDownloadState.ForeColor = $palette.MutedStrong
+        $TxtDl.BackColor = $palette.InputBack
+    }
+    else {
+        $LblDownloadState.Text = "The parent folder does not exist yet. Double-check the path before you apply changes."
+        $LblDownloadState.ForeColor = $palette.Warning
+        $TxtDl.BackColor = [System.Windows.Forms.ControlPaint]::Light($palette.Warning, 0.82)
+    }
+    $TxtDl.ForeColor = $palette.Fore
+}
 
 # ==========================================
 # 9. CONFIRMATION DIALOG (Enhanced)
@@ -1216,115 +1890,108 @@ New-RepairBtn "BtnUninstall" $gridX3 $gridRow2 "DangerButton" { if ([System.Wind
 
 function Show-ConfirmationDialog {
     param($CurrentState)
-    if ([string]::IsNullOrWhiteSpace($TxtPath.Text)) { 
-        [System.Windows.Forms.MessageBox]::Show("Please select an installation path first.", "Error")
-        return $false 
+    if ($CurrentState.Mode -eq "Modify" -and [string]::IsNullOrWhiteSpace($CurrentState.InstallPath)) {
+        Focus-InstallPath
+        Log-Status "Modify mode needs an existing JDownloader folder." "WARN"
+        [System.Windows.Forms.MessageBox]::Show("Select an existing JDownloader folder before running modify mode.", (Get-LangValue -Key "PathRequiredTitle" -Fallback "Path required"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        return $false
     }
 
+    $pal = Get-ActivePalette
+    $normalizedState = Get-NormalizedStateObject -State $CurrentState
+    $baselineState = Get-WorkspaceComparisonBaseline
+    $changedAreas = @(Get-ChangedWorkspaceAreas -SavedState $baselineState -CurrentState $normalizedState)
+    $runModeDisplay = if ($CurrentState.Mode -eq "Install") { "Clean install" } else { "Modify existing install" }
+    $sourceDisplay = if ($CurrentState.Mode -eq "Install") {
+        if ($CurrentState.InstallSource -eq "Mega") { "Manual Mega download" } else { "GitHub download" }
+    } else {
+        "Existing install"
+    }
+    $downloadDisplay = if ([string]::IsNullOrWhiteSpace($CurrentState.DlFolder)) { "JDownloader default" } else { $CurrentState.DlFolder }
+    $languageDisplay = if ([string]::IsNullOrWhiteSpace($CurrentState.LanguageCode)) { $CurrentLangCode } else { $CurrentState.LanguageCode }
+    $changeScopeText = if (-not $script:SavedWorkspaceState) {
+        if ($changedAreas.Count -gt 0) {
+            "First run setup. This will save the current workspace and apply updates to {0}." -f (Join-ReadableList -Items $changedAreas)
+        } else {
+            "First run setup. Current defaults will become the saved workspace for future launches."
+        }
+    } elseif ($changedAreas.Count -gt 0) {
+        "Compared with the last successful run, this will update {0}." -f (Join-ReadableList -Items $changedAreas)
+    } else {
+        "This re-applies the same workspace that was saved on the last successful run."
+    }
+    $pathPreview = if ([string]::IsNullOrWhiteSpace($CurrentState.InstallPath)) { "Auto-detect after install" } else { $CurrentState.InstallPath }
+    $guardrailText = if ($CurrentState.Mode -eq "Modify") {
+        "Modify mode backs up the current configuration before file changes are applied."
+    } else {
+        "Clean install runs the installer first, then detects the resulting JDownloader folder before applying your selected options."
+    }
     $cForm = New-Object System.Windows.Forms.Form
-    $cForm.Text = "Confirm Operations"
-    $cForm.Size = New-Object System.Drawing.Size(600, 750)
+    $cForm.Text = "Confirm changes"
+    $cForm.Size = New-Object System.Drawing.Size(700, 664)
+    $cForm.MinimumSize = $cForm.Size
     $cForm.StartPosition = "CenterParent"
-    $cForm.BackColor = [System.Drawing.Color]::FromArgb(30,30,30)
-    $cForm.ForeColor = "White"
-    $cForm.FormBorderStyle = "Sizable"
-    $cForm.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+    $cForm.FormBorderStyle = "FixedDialog"
+    $cForm.MaximizeBox = $false
+    $cForm.MinimizeBox = $false
+    $cForm.ShowInTaskbar = $false
+    $cForm.BackColor = $pal.FormBack
+    $cForm.ForeColor = $pal.Fore
     $cForm.AutoScaleMode = "Dpi"
 
-    $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text = "Verify and select options to apply:"
-    $lbl.Font = New-Object System.Drawing.Font("Segoe UI", 20, [System.Drawing.FontStyle]::Bold)
-    $lbl.Location = New-Object System.Drawing.Point(20,20); $lbl.AutoSize = $true
-    [void]$cForm.Controls.Add($lbl)
+    $summary = New-Surface -Parent $cForm -Location (New-Object System.Drawing.Point(16, 16)) -Size (New-Object System.Drawing.Size(652, 218))
+    [void](New-Label -Parent $summary -Text "Review the run" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)))
+    [void](New-Label -Parent $summary -Text "Use the checklist below to confirm the most important options before the tool starts writing files." -Location (New-Object System.Drawing.Point(24, 54)) -Size (New-Object System.Drawing.Size(604, 34)) -AutoSize $false -Tag "BodyMuted")
+    [void](New-Label -Parent $summary -Text "Run type" -Location (New-Object System.Drawing.Point(24, 104)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+    [void](New-Label -Parent $summary -Text $runModeDisplay -Location (New-Object System.Drawing.Point(24, 124)) -Font (New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)))
+    [void](New-Label -Parent $summary -Text "Install source" -Location (New-Object System.Drawing.Point(236, 104)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+    [void](New-Label -Parent $summary -Text $sourceDisplay -Location (New-Object System.Drawing.Point(236, 124)) -Size (New-Object System.Drawing.Size(184, 32)) -AutoSize $false -Tag "MutedStrong")
+    [void](New-Label -Parent $summary -Text "Theme preset" -Location (New-Object System.Drawing.Point(436, 104)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+    [void](New-Label -Parent $summary -Text $CurrentState.ThemeName -Location (New-Object System.Drawing.Point(436, 124)) -Size (New-Object System.Drawing.Size(190, 32)) -AutoSize $false -Tag "MutedStrong")
+    [void](New-Label -Parent $summary -Text "Icon pack" -Location (New-Object System.Drawing.Point(24, 156)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+    [void](New-Label -Parent $summary -Text $CurrentState.IconPack -Location (New-Object System.Drawing.Point(24, 176)) -Size (New-Object System.Drawing.Size(184, 20)) -AutoSize $false -Tag "MutedStrong")
+    [void](New-Label -Parent $summary -Text "Manager language" -Location (New-Object System.Drawing.Point(236, 156)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+    [void](New-Label -Parent $summary -Text $languageDisplay -Location (New-Object System.Drawing.Point(236, 176)) -Size (New-Object System.Drawing.Size(184, 20)) -AutoSize $false -Tag "MutedStrong")
+    [void](New-Label -Parent $summary -Text "Download folder" -Location (New-Object System.Drawing.Point(436, 156)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+    [void](New-Label -Parent $summary -Text $downloadDisplay -Location (New-Object System.Drawing.Point(436, 176)) -Size (New-Object System.Drawing.Size(190, 32)) -AutoSize $false -Tag "MutedStrong")
 
-    $flow = New-Object System.Windows.Forms.FlowLayoutPanel
-    $flow.Location = New-Object System.Drawing.Point(20, 70)
-    $flow.Size = New-Object System.Drawing.Size(540, 560)
-    $flow.FlowDirection = "TopDown"
-    $flow.WrapContents = $false
-    $flow.AutoScroll = $true
-    # Padding for scrollbar
-    $flow.Padding = New-Object System.Windows.Forms.Padding(0,0,20,0)
-    $flow.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
-    [void]$cForm.Controls.Add($flow)
+    $optionsPanel = New-Surface -Parent $cForm -Location (New-Object System.Drawing.Point(16, 250)) -Size (New-Object System.Drawing.Size(652, 336)) -Tag "SurfaceAlt"
+    [void](New-Label -Parent $optionsPanel -Text "Confirm optional switches" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+    [void](New-Label -Parent $optionsPanel -Text $changeScopeText -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(604, 38)) -AutoSize $false -Tag "BodyMuted")
 
-    function Add-Info {
-        param($txt, $val)
-        $l = New-Object System.Windows.Forms.Label
-        $l.Text = "$txt $val"
-        $l.AutoSize = $true
-        # Constrain width for wrapping
-        $l.MaximumSize = New-Object System.Drawing.Size(500, 0) 
-        $l.ForeColor = "Gray"
-        $l.Font = New-Object System.Drawing.Font("Segoe UI", 14)
-        [void]$flow.Controls.Add($l)
+    $KeyMap = [ordered]@{
+        "WindowDec"    = "Enable custom window decorations"
+        "ForceMinimal" = "Use compact tab layout"
+        "StartMin"     = "Start minimized"
+        "MinToTray"    = "Minimize to tray"
+        "CloseToTray"  = "Close button sends JDownloader to tray"
+        "PatchExe"     = "Apply dark executable icon"
+        "AutoUpdate"   = "Run update after completion"
     }
-
-    Add-Info "Theme Preset:" $CurrentState.ThemeName
-    Add-Info "Mode:" $CurrentState.Mode
-    Add-Info "Downloads:" $CurrentState.MaxSim
-    Add-Info "Path:" $CurrentState.InstallPath
-
-    # Auto-generate Confirmation Checkboxes
-    $KeyMap = @{
-        "WindowDec"="Enable custom window decorations";
-        "ForceMinimal"="Use compact/minimal tabs";
-        "StartMin"="Start Minimized";
-        "MinToTray"="Minimize to Tray";
-        "CloseToTray"="Close to Tray";
-        "PatchExe"="Patch .exe icon to dark mode";
-        "AutoUpdate"="Run Update after completion"
-    }
-
     $ResultRefs = @{}
-
+    [int]$optY = 104
     foreach ($key in $KeyMap.Keys) {
         if ($CurrentState.ContainsKey($key)) {
-            $cb = New-Object System.Windows.Forms.CheckBox
-            $cb.Text = $KeyMap[$key]
-            $cb.AutoSize = $true
-            # Constrain width for wrapping
-            $cb.MaximumSize = New-Object System.Drawing.Size(500, 0)
-            $cb.Checked = $CurrentState[$key]
-            $cb.Font = New-Object System.Drawing.Font("Segoe UI", 14)
-            $cb.ForeColor = "Gainsboro"
-            $cb.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 10) # Added Padding
-            [void]$flow.Controls.Add($cb)
+            $cb = New-CheckBox -Parent $optionsPanel -Text $KeyMap[$key] -Location (New-Object System.Drawing.Point(24, $optY)) -Checked $CurrentState[$key]
             $ResultRefs[$key] = $cb
+            $optY += 34
         }
     }
+    [void](New-Label -Parent $optionsPanel -Text "Install path" -Location (New-Object System.Drawing.Point(24, 262)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+    [void](New-Label -Parent $optionsPanel -Text $pathPreview -Location (New-Object System.Drawing.Point(24, 282)) -Size (New-Object System.Drawing.Size(604, 24)) -AutoSize $false -Tag "MutedStrong")
+    [void](New-Label -Parent $optionsPanel -Text $guardrailText -Location (New-Object System.Drawing.Point(24, 306)) -Size (New-Object System.Drawing.Size(604, 24)) -AutoSize $false -Tag "BodyMuted")
 
-    # Buttons
-    $btnPanel = New-Object System.Windows.Forms.Panel
-    $btnPanel.Height = 70
-    $btnPanel.Dock = "Bottom"
-    [void]$cForm.Controls.Add($btnPanel)
+    $btnOk = New-Button -Parent $cForm -Text (Get-LangValue -Key "ApplySelected" -Fallback "Apply selected changes") -Location (New-Object System.Drawing.Point(16, 600)) -Size (New-Object System.Drawing.Size(214, 38)) -Tag "PrimaryButton"
+    $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $btnCancel = New-Button -Parent $cForm -Text (Get-LangValue -Key "Back" -Fallback "Back") -Location (New-Object System.Drawing.Point(244, 600)) -Size (New-Object System.Drawing.Size(110, 38)) -Tag "SecondaryButton"
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $cForm.AcceptButton = $btnOk
+    $cForm.CancelButton = $btnCancel
 
-    $btnOk = New-Object System.Windows.Forms.Button
-    $btnOk.Text = "RUN OPERATIONS"
-    $btnOk.DialogResult = "OK"
-    $btnOk.BackColor = [System.Drawing.Color]::FromArgb(30,144,255)
-    $btnOk.ForeColor = "White"
-    $btnOk.FlatStyle = "Flat"
-    $btnOk.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
-    $btnOk.Size = New-Object System.Drawing.Size(220, 50)
-    $btnOk.Location = New-Object System.Drawing.Point(20, 10)
-    [void]$btnPanel.Controls.Add($btnOk)
-
-    $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text = "Cancel"
-    $btnCancel.DialogResult = "Cancel"
-    $btnCancel.BackColor = [System.Drawing.Color]::FromArgb(60,60,60)
-    $btnCancel.ForeColor = "White"
-    $btnCancel.FlatStyle = "Flat"
-    $btnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 14)
-    $btnCancel.Size = New-Object System.Drawing.Size(140, 50)
-    $btnCancel.Location = New-Object System.Drawing.Point(260, 10)
-    [void]$btnPanel.Controls.Add($btnCancel)
-
-    $result = $cForm.ShowDialog()
+    Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $cForm
+    $result = $cForm.ShowDialog($Form)
     
-    if ($result -eq "OK") {
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
         foreach ($k in $ResultRefs.Keys) {
              $CurrentState[$k] = $ResultRefs[$k].Checked
         }
@@ -1347,107 +2014,197 @@ function Show-ConfirmationDialog {
 # 10. NAVIGATION & EXECUTION
 # ==========================================
 
-$pages = @{ $BtnDashboard=$PageDashboard; $BtnInstallation=$PageInstallation; $BtnTheme=$PageTheme; $BtnBehavior=$PageBehavior; $BtnHardening=$PageHardening; $BtnRepair=$PageRepair }
-foreach ($entry in $pages.GetEnumerator()) {
-    $entry.Key.Add_Click({ 
-        # Visual Reset for Sidebar logic
-        foreach ($k in $pages.Keys) {
-            # Reset color based on Theme palette manually or let Theme Engine handle it next time.
-            # Simple approach: Reset to Sidebar background (approximate)
-            $k.BackColor = $Sidebar.BackColor
-        }
-        # Highlight Active
-        $this.BackColor = [System.Windows.Forms.ControlPaint]::Light($this.BackColor, 0.5)
+$pages = @{ $BtnDashboard = $PageDashboard; $BtnInstallation = $PageInstallation; $BtnTheme = $PageTheme; $BtnBehavior = $PageBehavior; $BtnHardening = $PageHardening; $BtnRepair = $PageRepair }
+$script:ActiveNavButton = $BtnDashboard
 
-        foreach ($p in $pages.Values) { $p.Visible = $false }
-        # Do NOT overwrite Tag
-        $pages[$this].Visible = $true 
-        
-        if ($pages[$this] -eq $PageTheme) { 
-             Resize-ThemePreview
-             Update-ThemePreview 
+function Update-NavigationState {
+    $pal = Get-ActivePalette
+    foreach ($button in $pages.Keys) {
+        if ($button -eq $script:ActiveNavButton) {
+            $button.BackColor = $pal.SidebarAlt
+            $button.ForeColor = $pal.Fore
+        } else {
+            $button.BackColor = $pal.Sidebar
+            $button.ForeColor = $pal.MutedStrong
         }
-    })
+    }
 }
-$PageDashboard.Visible = $true
+
+function Show-Page {
+    param($Button)
+    foreach ($page in $pages.Values) { $page.Visible = $false }
+    $pages[$Button].Visible = $true
+    $script:ActiveNavButton = $Button
+    Update-NavigationState
+    if ($pages[$Button] -eq $PageTheme) {
+        Resize-ThemePreview
+        Update-ThemePreview
+    }
+}
+
+$BtnBrowse.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtPath.Text = $fbd.SelectedPath } })
+$BtnDetect.Add_Click({ $p = Detect-JDPath; if ($p) { $TxtPath.Text = $p; Log-Status "Detected JDownloader at $p." "SUCCESS" } else { Log-Status "JDownloader was not detected automatically on this machine." "WARN" } })
+$BtnDl.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtDl.Text = $fbd.SelectedPath } })
+$BtnOpenThm.Add_Click({ $path = "$($TxtPath.Text)\themes\standard\org\jdownloader\images"; if (Test-Path $path) { Invoke-Item $path } else { [System.Windows.Forms.MessageBox]::Show("No icon folder was found yet. Apply a theme first or point the app at an existing install.", "Folder not found", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null } })
+$LblThemeLink.Add_LinkClicked({ if ($LblThemeLink.Tag) { Start-Process $LblThemeLink.Tag | Out-Null } })
+$CboGuiTheme.Add_SelectedIndexChanged({ Apply-GuiTheme -ThemeName $CboGuiTheme.Text; Update-WorkspaceState })
+$CboLang.Add_SelectedIndexChanged({ Apply-LanguageData $CboLang.Text; Update-InterfaceText; Update-WorkspaceState })
+$CboTheme.Add_SelectedIndexChanged({ Update-ThemePreview; Update-WorkspaceState })
+$CboIcons.Add_SelectedIndexChanged({ Update-WorkspaceState })
+$CboMode.Add_SelectedIndexChanged({ Update-ModeSummary; Update-PathState; Update-WorkspaceState })
+$TxtPath.Add_TextChanged({ Update-PathState; Update-WorkspaceState })
+$TxtDl.Add_TextChanged({ Update-DownloadFolderState; Update-WorkspaceState })
+$NumSim.Add_ValueChanged({ Update-WorkspaceState })
+$NumPause.Add_ValueChanged({ Update-WorkspaceState })
+$ChkWinDec.Add_CheckedChanged({ Update-WorkspaceState })
+$ChkMinLay.Add_CheckedChanged({ Update-WorkspaceState })
+$ChkMin.Add_CheckedChanged({ Update-WorkspaceState })
+$ChkTray.Add_CheckedChanged({ Update-WorkspaceState })
+$ChkCloseTray.Add_CheckedChanged({ Update-WorkspaceState })
+$ChkExe.Add_CheckedChanged({ Update-WorkspaceState })
+$ChkUpdate.Add_CheckedChanged({ Update-WorkspaceState })
+$BtnRestoreWorkspace.Add_Click({
+    if (-not $script:SavedWorkspaceState) { return }
+    $shouldRestore = Show-ActionPrompt -Title "Restore last successful run" -Message "This replaces the current selections with the workspace that was last applied successfully." -ConfirmText "Restore selections" -ConfirmTag "PrimaryButton"
+    if ($shouldRestore) {
+        Apply-StateToControls -State $script:SavedWorkspaceState
+        Log-Status "Workspace selections were restored from the last successful run." "SUCCESS"
+    }
+})
+
+foreach ($entry in $pages.GetEnumerator()) {
+    $entry.Key.Add_Click({ Show-Page -Button $this })
+}
+
+$ToolTip.SetToolTip($BtnDashboard, "Open the dashboard overview page (Ctrl+1).")
+$ToolTip.SetToolTip($BtnInstallation, "Open installation path and mode options (Ctrl+2).")
+$ToolTip.SetToolTip($BtnTheme, "Open themes, previews, and icon settings (Ctrl+3).")
+$ToolTip.SetToolTip($BtnBehavior, "Open download and tray behavior settings (Ctrl+4).")
+$ToolTip.SetToolTip($BtnHardening, "Open debloat and hardening options (Ctrl+5).")
+$ToolTip.SetToolTip($BtnRepair, "Open repair and recovery tools (Ctrl+6).")
+$ToolTip.SetToolTip($BtnExec, "Apply the selected installation, theme, behavior, hardening, and repair settings in one run.")
+$ToolTip.SetToolTip($CboMode, "Choose whether the tool should refine an existing install or run a fresh deployment flow.")
+$ToolTip.SetToolTip($TxtPath, "Required for modify mode. Optional for clean install mode.")
+$ToolTip.SetToolTip($TxtDl, "Leave blank to reset the download folder to JDownloader's default.")
+$ToolTip.SetToolTip($CboGuiTheme, "Change the visual theme of this manager window.")
+$ToolTip.SetToolTip($CboLang, "Change the language used by this manager window.")
+$ToolTip.SetToolTip($BtnRestoreWorkspace, "Restore the last successful workspace selections and discard pending edits.")
+$ToolTip.SetToolTip($CboTheme, "Pick the JDownloader look and feel that should be installed.")
+$ToolTip.SetToolTip($CboIcons, "Icon packs can be changed independently from the theme preset.")
+$ToolTip.SetToolTip($ChkWinDec, "Turns on custom window decorations when the theme supports them.")
+$ToolTip.SetToolTip($ChkMinLay, "Tightens the main JDownloader tabs for a cleaner, lower-noise shell.")
+$ToolTip.SetToolTip($ChkExe, "Replaces the executable icon for a more cohesive dark desktop setup.")
+
+$Form.Add_KeyDown({
+    param($sender, $e)
+    if ($e.Control) {
+        switch ($e.KeyCode) {
+            ([System.Windows.Forms.Keys]::D1) { Show-Page -Button $BtnDashboard; $e.SuppressKeyPress = $true; return }
+            ([System.Windows.Forms.Keys]::D2) { Show-Page -Button $BtnInstallation; $e.SuppressKeyPress = $true; return }
+            ([System.Windows.Forms.Keys]::D3) { Show-Page -Button $BtnTheme; $e.SuppressKeyPress = $true; return }
+            ([System.Windows.Forms.Keys]::D4) { Show-Page -Button $BtnBehavior; $e.SuppressKeyPress = $true; return }
+            ([System.Windows.Forms.Keys]::D5) { Show-Page -Button $BtnHardening; $e.SuppressKeyPress = $true; return }
+            ([System.Windows.Forms.Keys]::D6) { Show-Page -Button $BtnRepair; $e.SuppressKeyPress = $true; return }
+            ([System.Windows.Forms.Keys]::Enter) {
+                if ($BtnExec.Enabled) { $BtnExec.PerformClick() }
+                $e.SuppressKeyPress = $true
+                return
+            }
+            ([System.Windows.Forms.Keys]::R) {
+                if ($BtnRestoreWorkspace.Enabled) { $BtnRestoreWorkspace.PerformClick() }
+                $e.SuppressKeyPress = $true
+                return
+            }
+        }
+    }
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::F5 -and $BtnExec.Enabled) {
+        $BtnExec.PerformClick()
+        $e.SuppressKeyPress = $true
+    }
+})
 
 $Form.Add_Load({
-    Start-ThemeImagePreload -Definitions $ThemeDefinitions
-
-    $CboTheme.SelectedIndex = 0
+    Sync-PageCanvases
     Resize-ThemePreview
-    
+    Layout-Footer
+
+    $CboGuiTheme.SelectedIndex = 0
+    if ($CboLang.Items.Count -gt 0) { $CboLang.SelectedItem = $CurrentLangCode }
+    if ($CboIcons.Items.Count -gt 0) { $CboIcons.SelectedIndex = 0 }
+    if ($CboTheme.Items.Count -gt 0) { $CboTheme.SelectedIndex = 0 }
+    $CboMode.SelectedIndex = 0
+
     $sysTheme = Detect-SystemTheme
-    $CboGuiTheme.SelectedItem = $sysTheme
-    Apply-GuiTheme -ThemeName $sysTheme
-    
-    $detected = Detect-JDPath
-    if ($detected) { 
-        $TxtPath.Text = $detected
-        $CboMode.SelectedIndex = 0
-        Log-Status "Found JDownloader at: $detected"
-    } else { 
-        $CboMode.SelectedIndex = 1
-        Log-Status "JDownloader not found. defaulted to Clean Install."
-    }
+    if ($CboGuiTheme.Items.Contains($sysTheme)) { $CboGuiTheme.SelectedItem = $sysTheme }
 
     $saved = Load-Settings
+    $detected = Detect-JDPath
     if ($saved) {
-        if ($saved.PSObject.Properties.Name -contains 'InstallPath') { $TxtPath.Text = $saved.InstallPath }
-        if ($saved.PSObject.Properties.Name -contains 'ThemeName')  { $CboTheme.Text = $saved.ThemeName }
-        if ($saved.PSObject.Properties.Name -contains 'GuiThemeName'){ $CboGuiTheme.Text = $saved.GuiThemeName }
+        Apply-StateToControls -State $saved
+        if ([string]::IsNullOrWhiteSpace($TxtPath.Text) -and $detected) { $TxtPath.Text = $detected }
+    } elseif ($detected) {
+        $TxtPath.Text = $detected
+        $CboMode.SelectedIndex = 0
+    } else {
+        $CboMode.SelectedIndex = 1
     }
+
+    if ($detected) { Log-Status "JDownloader was detected successfully." "SUCCESS" } else { Log-Status "JDownloader was not detected. Clean install mode is ready." "INFO" }
+
+    Configure-DirectoryInput -TextBox $TxtPath -CueText "Required for modify mode. Optional for clean install mode."
+    Configure-DirectoryInput -TextBox $TxtDl -CueText "Leave blank to reset to JDownloader's default download folder."
+    Apply-AccessibilityMetadata
+    Apply-GuiTheme -ThemeName $CboGuiTheme.Text
+    Update-ModeSummary
+    Update-PathState
+    Update-DownloadFolderState
+    Update-ThemePreview
+    Show-Page -Button $BtnDashboard
+    $script:InitialWorkspaceState = Get-NormalizedStateObject -State (Get-CurrentGuiState)
+    if ($saved) { $script:SavedWorkspaceState = Get-NormalizedStateObject -State (Get-CurrentGuiState) } else { $script:SavedWorkspaceState = $null }
+    $script:IsBootstrapping = $false
+    Update-WorkspaceState
+    Start-ThemeImagePreload -Definitions $ThemeDefinitions
 })
 
-$Form.Add_Resize({
-    Resize-ThemePreview
-})
-
-# Dispose all resources on close
+$Form.Add_Resize({ Sync-PageCanvases; Resize-ThemePreview; Layout-Footer })
 $Form.Add_FormClosing({
+    param($sender, $e)
+    if (-not $script:IsBootstrapping -and $BtnExec -and $BtnExec.Enabled -and (Test-WorkspaceHasPendingChanges)) {
+        $discard = Show-ActionPrompt -Title "Discard pending changes" -Message "This workspace has unapplied changes. Close the manager without saving them?" -ConfirmText "Discard changes" -ConfirmTag "DangerButton"
+        if (-not $discard) {
+            $e.Cancel = $true
+            return
+        }
+    }
+
+    if ($LogoBox.Image) { $LogoBox.Image.Dispose() }
     Cleanup-Resources
 })
 
 $BtnExec.Add_Click({
-    # Explicit mapping logic
-    $mode = "Modify"
-    $src = $null
-
-    if ($CboMode.SelectedIndex -eq 0) {
-        $mode = "Modify"
-    } elseif ($CboMode.SelectedIndex -eq 1) {
-        $mode = "Install"
-        $src = "GitHub"
-    } elseif ($CboMode.SelectedIndex -eq 2) {
-        $mode = "Install"
-        $src = "Mega"
-    }
-    
-    $State = @{ 
-        Mode=$mode; 
-        InstallSource=$src; 
-        InstallPath=$TxtPath.Text; 
-        ThemeName=$CboTheme.Text; 
-        GuiThemeName=$CboGuiTheme.Text; 
-        IconPack=$CboIcons.Text; 
-        WindowDec=$ChkWinDec.Checked; 
-        MaxSim=$NumSim.Value; 
-        DlFolder=$TxtDl.Text; 
-        StartMin=$ChkMin.Checked; 
-        MinToTray=$ChkTray.Checked; 
-        CloseToTray=$ChkCloseTray.Checked; 
-        PatchExe=$ChkExe.Checked; 
-        AutoUpdate=$ChkUpdate.Checked; 
-        ForceMinimal=$ChkMinLay.Checked; 
-        PauseSpeed=$NumPause.Value 
-    }
-
+    $State = Get-CurrentGuiState
     if (Show-ConfirmationDialog -CurrentState $State) {
-        $BtnExec.Enabled = $false; $BtnExec.Text = "Processing..."
+        Set-WorkspaceBusyState -IsBusy $true
+        $ProgressBar.Value = 15
+        Log-Status "Applying selected changes..." "INFO"
         $Form.Refresh()
-        Execute-Operations -GUI_State $State
-        $BtnExec.Text = $Lang.Execute; $BtnExec.Enabled = $true
-        [System.Windows.Forms.MessageBox]::Show("Operations completed.", "Done") | Out-Null
+        $completed = $false
+        try {
+            $completed = Execute-Operations -GUI_State $State
+        } finally {
+            Set-WorkspaceBusyState -IsBusy $false
+        }
+        if ($completed) {
+            $script:SavedWorkspaceState = Get-NormalizedStateObject -State $State
+            $script:InitialWorkspaceState = $script:SavedWorkspaceState
+            Update-WorkspaceState
+            [System.Windows.Forms.MessageBox]::Show((Get-LangValue -Key "RunFinishedBody" -Fallback "Selected operations completed. Review the status area for the final result."), (Get-LangValue -Key "RunFinishedTitle" -Fallback "Run finished"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        } else {
+            $ProgressBar.Style = "Continuous"
+            $ProgressBar.MarqueeAnimationSpeed = 0
+            $ProgressBar.Value = 0
+        }
     }
 })
 
