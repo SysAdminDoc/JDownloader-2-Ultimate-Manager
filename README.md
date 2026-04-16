@@ -1,6 +1,12 @@
+<p align="center"><img src="icon.png" width="128" alt="JDownloader 2 Ultimate Manager"></p>
+
 # JDownloader 2 Ultimate Manager  
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-PowerShell-lightgrey)
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-13.5.0-58A6FF?style=for-the-badge">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-PowerShell-58A6FF?style=for-the-badge">
+</p>
 
 <img width="1637" height="1216" alt="Preview" src="https://github.com/user-attachments/assets/0953927a-209c-476d-aa87-a17f2ab68f19" />
 
