@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.6.0)
+    JDownloader 2 ULTIMATE MANAGER (v13.7.0)
     - Premium workspace UI with surface-based layout, hero sections, and card tiles.
     - Enhanced 18-token theme palette with semantic colors across all four themes.
     - Workspace state tracking with change detection and restore capability.
@@ -11,6 +11,14 @@ param(
     [string]$ResumeStateFile,
     [switch]$ResumeApply
 )
+
+Set-StrictMode -Off
+$ErrorActionPreference = 'Continue'
+
+# Script identity - single source of truth for versioning
+$script:AppVersion = '13.7.0'
+$script:AppName    = 'JDownloader 2 Ultimate Manager'
+$script:AppTitle   = "$script:AppName v$script:AppVersion"
 
 # ==========================================
 # 0. PRE-FLIGHT CHECKS & HARDENING
@@ -55,25 +63,53 @@ try {
 # ==========================================
 # 2. GLOBAL VARIABLES & PATHS
 # ==========================================
-$LegacyAppDataDir = "$env:ProgramData\JD2-Ultimate-Manager"
-$AppDataDir   = "$env:LOCALAPPDATA\JD2-Ultimate-Manager"
-$LogDir       = "$AppDataDir\Logs"
-$WorkDir      = "$env:TEMP\JD2_Ult_Tool_v13_0"
-$SettingsFile = "$AppDataDir\settings.json"
-$LegacySettingsFile = "$LegacyAppDataDir\settings.json"
-$VersionFile  = "$AppDataDir\version.json"
-$LangFile     = "$AppDataDir\lang.json"
+# Guard against unusual environments where LOCALAPPDATA / TEMP are unset.
+$LocalAppDataRoot = if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { Join-Path $env:USERPROFILE 'AppData\Local' } else { $env:LOCALAPPDATA }
+$ProgramDataRoot  = if ([string]::IsNullOrWhiteSpace($env:ProgramData))  { Join-Path $env:SystemDrive 'ProgramData' } else { $env:ProgramData }
+$TempRoot         = if ([string]::IsNullOrWhiteSpace($env:TEMP))         { Join-Path $LocalAppDataRoot 'Temp' }         else { $env:TEMP }
+
+$LegacyAppDataDir = Join-Path $ProgramDataRoot  'JD2-Ultimate-Manager'
+$AppDataDir       = Join-Path $LocalAppDataRoot 'JD2-Ultimate-Manager'
+$LogDir           = Join-Path $AppDataDir       'Logs'
+$WorkDir          = Join-Path $TempRoot         'JD2_Ult_Tool_v13_0'
+$SettingsFile     = Join-Path $AppDataDir       'settings.json'
+$LegacySettingsFile = Join-Path $LegacyAppDataDir 'settings.json'
+$LangFile         = Join-Path $AppDataDir       'lang.json'
+# Note: $VersionFile was never read; removed to eliminate dead state.
 
 # Ensure directories exist with error handling
 foreach ($path in @($AppDataDir, $LogDir, $WorkDir)) {
-    if (-not (Test-Path $path)) { 
-        try { New-Item -ItemType Directory -Path $path -Force | Out-Null } catch {} 
+    if ([string]::IsNullOrWhiteSpace($path)) { continue }
+    if (-not (Test-Path $path)) {
+        try { New-Item -ItemType Directory -Path $path -Force | Out-Null } catch {}
     }
 }
+
+# Best-effort log-retention: keep the 20 most recent log files so logs/ never grows unbounded.
+try {
+    if (Test-Path $LogDir) {
+        Get-ChildItem -Path $LogDir -Filter "*.log" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -Skip 20 |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
 
 $LogFile     = "$LogDir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
 $StatusLabel = $null
 $ProgressBar = $null
+
+# Best-effort WorkDir hygiene: remove items older than 7 days so TEMP never accumulates
+# gigabytes of unpacked installers/icons across many runs. Skip anything in active use via
+# -ErrorAction SilentlyContinue so a locked file never blocks startup.
+try {
+    if (Test-Path $WorkDir) {
+        $cutoff = (Get-Date).AddDays(-7)
+        Get-ChildItem -Path $WorkDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $cutoff } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
 
 # ToolTip helper
 $ToolTip = New-Object System.Windows.Forms.ToolTip
@@ -81,12 +117,14 @@ $ToolTip.AutoPopDelay = 5000
 $ToolTip.InitialDelay = 1000
 $ToolTip.ReshowDelay = 500
 
-# Language Registry for live updates
-$LanguageRegistry = @()
+# Language Registry for live updates. Using a List avoids the O(n) copy that `+=` causes
+# across hundreds of registrations during GUI construction.
+$LanguageRegistry = New-Object System.Collections.Generic.List[hashtable]
 
-# Global tracking for cleanup
-$GlobalJobs = @{}
-$GlobalTimers = @()
+# Global tracking for cleanup. A List avoids rebind-per-append ($arr += x) and makes
+# ownership clear when we dispose on FormClosing.
+$GlobalJobs   = @{}
+$GlobalTimers = New-Object System.Collections.Generic.List[object]
 $ThemeImageCache = @{}
 $script:CurrentGuiTheme = "Dark (Default)"
 $script:LastStatusText = "Ready"
@@ -94,6 +132,7 @@ $script:LastStatusType = "INFO"
 $script:InitialWorkspaceState = $null
 $script:SavedWorkspaceState = $null
 $script:IsBootstrapping = $true
+$script:ApplyInFlight = $false
 
 # ==========================================
 # 3. LANGUAGE & GUI THEME ENGINE
@@ -101,7 +140,7 @@ $script:IsBootstrapping = $true
 
 # --- Default English Fallback ---
 $DefaultLang = [ordered]@{
-    "Title" = "JDownloader 2 Ultimate Manager v13.5.0";
+    "Title" = $script:AppTitle;
     "Dashboard" = "Dashboard"; "Installation" = "Installation"; "Themes" = "Themes"; 
     "Behavior" = "Behavior"; "Hardening" = "Hardening"; "Repair" = "Repair Tools";
     "Execute" = "Apply Workspace"; "Status" = "Status: Ready";
@@ -165,54 +204,118 @@ foreach ($key in $DefaultLang.Keys) {
     $Lang[$key] = $DefaultLang[$key]
 }
 
-$AvailableLanguages = @{} 
+$AvailableLanguages = @{}
 $CurrentLangCode = "en"
+
+# Friendly names for the language dropdown (ASCII-only to remain byte-stable under PS 5.1 no-BOM).
+# Codes not listed here fall back to the raw ISO code.
+$script:LanguageDisplayNames = @{
+    'en' = 'English'
+    'es' = 'Spanish'
+    'de' = 'German'
+    'fr' = 'French'
+    'it' = 'Italian'
+    'pt' = 'Portuguese'
+    'nl' = 'Dutch'
+    'pl' = 'Polish'
+    'ru' = 'Russian'
+    'ja' = 'Japanese'
+    'ko' = 'Korean'
+    'zh' = 'Chinese'
+    'ar' = 'Arabic'
+    'tr' = 'Turkish'
+    'cs' = 'Czech'
+    'sv' = 'Swedish'
+    'da' = 'Danish'
+    'no' = 'Norwegian'
+    'fi' = 'Finnish'
+    'hu' = 'Hungarian'
+    'ro' = 'Romanian'
+    'uk' = 'Ukrainian'
+    'el' = 'Greek'
+    'he' = 'Hebrew'
+    'th' = 'Thai'
+    'vi' = 'Vietnamese'
+    'id' = 'Indonesian'
+    'sk' = 'Slovak'
+    'bg' = 'Bulgarian'
+    'hr' = 'Croatian'
+    'sr' = 'Serbian'
+}
+
+function Get-LanguageDisplayName {
+    param([string]$Code)
+    if ([string]::IsNullOrWhiteSpace($Code)) { return $Code }
+    if ($script:LanguageDisplayNames.ContainsKey($Code)) {
+        return ("{0}  [{1}]" -f $script:LanguageDisplayNames[$Code], $Code)
+    }
+    return $Code
+}
 
 function Load-Language {
     $langUrl = "https://raw.githubusercontent.com/SysAdminDoc/JDownloader-2-Ultimate-Manager/refs/heads/main/Translations/lang.json"
-    $userLang = (Get-Culture).TwoLetterISOLanguageName
+    $userLang = try { (Get-Culture).TwoLetterISOLanguageName } catch { "en" }
+    if ([string]::IsNullOrWhiteSpace($userLang)) { $userLang = "en" }
+    $tempLangFile = "$LangFile.download"
+
+    function Select-LangFallback {
+        param($UserCode)
+        if ($AvailableLanguages.ContainsKey($UserCode)) {
+            $script:CurrentLangCode = $UserCode
+            Apply-LanguageData $UserCode
+        } elseif ($AvailableLanguages.ContainsKey("en")) {
+            $script:CurrentLangCode = "en"
+            Apply-LanguageData "en"
+        }
+    }
 
     try {
-        $tempLangFile = "$LangFile.download"
-        Invoke-WebRequest -Uri $langUrl -OutFile $tempLangFile -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        # Prefer a modest timeout with a retry to tolerate slow connections.
+        $webOk = $false
+        for ($attempt = 1; $attempt -le 2 -and -not $webOk; $attempt++) {
+            try {
+                Invoke-WebRequest -Uri $langUrl -OutFile $tempLangFile -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+                $webOk = $true
+            } catch {
+                if ($attempt -ge 2) { throw }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+
         if ((Test-Path $tempLangFile) -and (Get-Item $tempLangFile).Length -gt 100) {
             $raw = Get-Content $tempLangFile -Raw -Encoding UTF8
-            $json = $raw | ConvertFrom-Json
-            Move-Item $tempLangFile $LangFile -Force -ErrorAction SilentlyContinue
+            $json = $raw | ConvertFrom-Json -ErrorAction Stop
+            try { Move-Item $tempLangFile $LangFile -Force -ErrorAction Stop } catch { Remove-Item $tempLangFile -Force -ErrorAction SilentlyContinue }
 
-            # Store all available languages for dropdown
             $json.PSObject.Properties | ForEach-Object {
                 $AvailableLanguages[$_.Name] = $_.Value
             }
-
-            # Auto-detect logic
-            if ($AvailableLanguages.ContainsKey($userLang)) {
-                $script:CurrentLangCode = $userLang
-                Apply-LanguageData $userLang
-            } elseif ($AvailableLanguages.ContainsKey("en")) {
-                $script:CurrentLangCode = "en"
-                Apply-LanguageData "en"
-            }
-        } else {
-            Remove-Item $tempLangFile -Force -ErrorAction SilentlyContinue
-            $AvailableLanguages["en"] = $DefaultLang
+            Select-LangFallback $userLang
+            return
         }
+        Remove-Item $tempLangFile -Force -ErrorAction SilentlyContinue
+        throw "Downloaded language file was empty or invalid."
     } catch {
-        Remove-Item "$LangFile.download" -Force -ErrorAction SilentlyContinue
-        # Fall back to cached copy if available
+        Remove-Item $tempLangFile -Force -ErrorAction SilentlyContinue
         if (Test-Path $LangFile) {
             try {
-                $json = Get-Content $LangFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                $json = Get-Content $LangFile -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
                 $json.PSObject.Properties | ForEach-Object { $AvailableLanguages[$_.Name] = $_.Value }
-                if ($AvailableLanguages.ContainsKey($userLang)) {
-                    $script:CurrentLangCode = $userLang
-                    Apply-LanguageData $userLang
-                }
-            } catch { $AvailableLanguages["en"] = $DefaultLang }
-        } else {
-            $AvailableLanguages["en"] = $DefaultLang
+                Select-LangFallback $userLang
+                return
+            } catch {}
         }
     }
+
+    # Final defensive fallback: ensure at least English-with-default-keys is selectable.
+    if (-not $AvailableLanguages.ContainsKey("en")) {
+        $enPayload = New-Object PSCustomObject
+        foreach ($key in $DefaultLang.Keys) {
+            $enPayload | Add-Member -MemberType NoteProperty -Name $key -Value $DefaultLang[$key] -Force
+        }
+        $AvailableLanguages["en"] = $enPayload
+    }
+    $script:CurrentLangCode = "en"
 }
 
 $script:LangKeyAliases = @{
@@ -226,14 +329,29 @@ $script:LangKeyAliases = @{
 
 function Apply-LanguageData {
     param($Code)
-    if ($AvailableLanguages.ContainsKey($Code)) {
-        $dict = $AvailableLanguages[$Code]
-        foreach ($key in $dict.PSObject.Properties.Name) {
-            $Lang[$key] = $dict.$key
-            # Bridge mismatched keys so translations reach registered controls
-            if ($script:LangKeyAliases.ContainsKey($key)) {
-                $Lang[$script:LangKeyAliases[$key]] = $dict.$key
-            }
+    if (-not $AvailableLanguages.ContainsKey($Code)) { return }
+    $dict = $AvailableLanguages[$Code]
+    if (-not $dict) { return }
+
+    # Support PSCustomObject (from ConvertFrom-Json), Hashtable, and OrderedDictionary.
+    $keys = @()
+    $getter = $null
+    if ($dict -is [System.Collections.IDictionary]) {
+        $keys = @($dict.Keys)
+        $getter = { param($k) $dict[$k] }
+    } elseif ($dict -is [psobject]) {
+        $keys = @($dict.PSObject.Properties.Name)
+        $getter = { param($k) $dict.$k }
+    } else {
+        return
+    }
+
+    foreach ($key in $keys) {
+        $value = & $getter $key
+        if ($null -eq $value) { continue }
+        $Lang[$key] = $value
+        if ($script:LangKeyAliases.ContainsKey($key)) {
+            $Lang[$script:LangKeyAliases[$key]] = $value
         }
     }
 }
@@ -249,11 +367,16 @@ function Get-LangValue {
 
 function Register-LangControl {
     param($Control, $Key)
-    if (-not $Key) { return }
-    $script:LanguageRegistry += @{ Control = $Control; Key = $Key }
-    # Set initial text
+    if (-not $Control -or [string]::IsNullOrWhiteSpace($Key)) { return }
+    # Guard against accidental double-registration (happens if a control is rebuilt and
+    # Register-LangControl is re-called against it). Duplicate entries would cause redundant
+    # writes during Update-InterfaceText but do no real harm; still, keep the registry clean.
+    foreach ($entry in $script:LanguageRegistry) {
+        if ($entry.Control -eq $Control -and $entry.Key -eq $Key) { return }
+    }
+    [void]$script:LanguageRegistry.Add(@{ Control = $Control; Key = $Key })
     if ($Lang.Contains($Key)) {
-        $Control.Text = $Lang[$Key]
+        try { $Control.Text = [string]$Lang[$Key] } catch {}
     }
 }
 
@@ -393,8 +516,6 @@ $Template_General = '{"maxsimultanedownloadsperhost":1,"delaywritemode":"AUTO","
 $Template_Tray = '{"freshinstall":false,"onminimizeaction":"TO_TASKBAR","tooltipenabled":true,"trayiconclipboardindicatorenabled":false,"oncloseaction":"ASK","tooglewindowstatuswithsingleclickenabled":false,"greyiconenabled":false,"gnometrayicontransparentenabled":true,"enabled":true,"startminimizedenabled":false,"trayonlyvisibleifwindowishiddenenabled":false}'
 $Template_Update = '{"autoupdatecheckenabled":true,"installUpdatesSilentlyIfPossibleEnabled":true,"doAskMeBeforeInstallingAnUpdateEnabled":false,"installUpdatesOnExitEnabled":true,"jarDiffEnabled":true}'
 $Template_BubbleNotify = '{"bubblenotifyenabledstate":"NEVER"}'
-$Template_RemoteAPI = '{"deprecatedapienabled":false,"deprecatedapilocalhostonly":true,"externinterfaceenabled":true,"externinterfacelocalhostonly":true,"localapiserverheaderxframeoptions":"DENY","localapiserverheaderxxssprotection":"1; mode=block","localapiserverheadercontentsecuritypolicy":"default-src '"'"'self'"'"'"}'
-$Template_SilentMode = '{"manualenabled":false,"autoresetonstartupenabled":true,"autotrigger":"NEVER","oncaptchaduringsilentmodeaction":"WAIT_IN_BACKGROUND_UNTIL_WINDOW_GETS_FOCUS_OR_TIMEOUT"}'
 
 # ==========================================
 # 6. CORE UTILITIES & LOGGING
@@ -415,14 +536,31 @@ function Log-Status {
 
 function Save-Settings {
     param($SettingsObj)
-    try { $SettingsObj | ConvertTo-Json -Depth 5 | Set-Content $SettingsFile -Encoding UTF8 } catch { Log-Status "Failed to save settings: $_" "ERROR" }
+    if (-not $SettingsObj) { return }
+    try {
+        $json = $SettingsObj | ConvertTo-Json -Depth 10
+        $tmp = "$SettingsFile.tmp"
+        Set-Content -Path $tmp -Value $json -Encoding UTF8 -ErrorAction Stop
+        # Atomic replace: move temp into place so a crash mid-write never corrupts settings.
+        Move-Item -Path $tmp -Destination $SettingsFile -Force -ErrorAction Stop
+    } catch {
+        Log-Status "Failed to save settings: $_" "ERROR"
+        try { Remove-Item "$SettingsFile.tmp" -Force -ErrorAction SilentlyContinue } catch {}
+    }
 }
 
 function Get-SettingsSourcePath {
     if (Test-Path $SettingsFile) { return $SettingsFile }
     if (Test-Path $LegacySettingsFile) {
-        # Migrate legacy settings to new location
-        try { Copy-Item $LegacySettingsFile $SettingsFile -Force -ErrorAction Stop } catch { Log-Status "Failed to migrate legacy settings: $_" "WARN" }
+        # Migrate legacy settings, then park the old copy alongside as a one-time breadcrumb
+        # so we don't keep re-migrating on every launch.
+        try {
+            Copy-Item $LegacySettingsFile $SettingsFile -Force -ErrorAction Stop
+            try { Rename-Item -Path $LegacySettingsFile -NewName 'settings.migrated.json' -Force -ErrorAction SilentlyContinue } catch {}
+            Log-Status "Migrated legacy settings from ProgramData to LocalAppData." "INFO"
+        } catch {
+            Log-Status "Failed to migrate legacy settings: $_" "WARN"
+        }
         return $SettingsFile
     }
     return $SettingsFile
@@ -430,8 +568,20 @@ function Get-SettingsSourcePath {
 
 function Load-Settings {
     $sourcePath = Get-SettingsSourcePath
-    if (Test-Path $sourcePath) { try { return Get-Content $sourcePath -Raw | ConvertFrom-Json } catch { return $null } }
-    return $null
+    if (-not (Test-Path $sourcePath)) { return $null }
+    try {
+        $raw = Get-Content $sourcePath -Raw -Encoding UTF8 -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+        return $raw | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        # Corrupt settings file - quarantine it so the next run isn't stuck in a bad state.
+        try {
+            $bad = "$sourcePath.bad-$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+            Move-Item -Path $sourcePath -Destination $bad -Force -ErrorAction SilentlyContinue
+            Log-Status "Settings file was unreadable and was quarantined: $bad" "WARN"
+        } catch {}
+        return $null
+    }
 }
 
 function Save-ResumeState {
@@ -440,12 +590,16 @@ function Save-ResumeState {
     if (-not (Test-Path $WorkDir)) {
         try { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null } catch {}
     }
-    $resumeFile = Join-Path $WorkDir "resume-state.json"
+    # Unique filename avoids collisions if the user launches two copies back-to-back.
+    $resumeFile = Join-Path $WorkDir ("resume-state-{0}-{1:N}.json" -f $PID, [guid]::NewGuid())
     try {
-        $State | ConvertTo-Json -Depth 5 | Set-Content $resumeFile -Encoding UTF8
+        $tmp = "$resumeFile.tmp"
+        $State | ConvertTo-Json -Depth 10 | Set-Content $tmp -Encoding UTF8 -ErrorAction Stop
+        Move-Item -Path $tmp -Destination $resumeFile -Force -ErrorAction Stop
         return $resumeFile
     } catch {
         Log-Status "Failed to preserve the current workspace before requesting admin approval." "ERROR"
+        try { Remove-Item "$resumeFile.tmp" -Force -ErrorAction SilentlyContinue } catch {}
         return $null
     }
 }
@@ -453,8 +607,15 @@ function Save-ResumeState {
 function Load-ResumeState {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) { return $null }
+    # Resume files are read from TEMP which is per-user but still untrusted if the file is stale.
+    # Defensive: size cap (1 MB) and always remove after reading, regardless of parse outcome.
     try {
-        return Get-Content $Path -Raw | ConvertFrom-Json
+        $file = Get-Item -Path $Path -ErrorAction Stop
+        if ($file.Length -gt 1MB) {
+            Log-Status "Resume state file is unexpectedly large; refusing to load." "WARN"
+            return $null
+        }
+        return Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
     } catch {
         Log-Status "The saved workspace handoff could not be restored. Start the apply flow again." "WARN"
         return $null
@@ -469,10 +630,34 @@ function Request-ElevatedApply {
     $resumeFile = Save-ResumeState -State $normalizedState
     if (-not $resumeFile) { return $false }
 
+    # When launched via `irm | iex`, $PSCommandPath is null. Prefer MyInvocation,
+    # then fall back to the compiled EXE in the install folder if present.
+    $scriptPath = $null
+    if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        $scriptPath = $PSCommandPath
+    } elseif ($MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+        $scriptPath = $MyInvocation.MyCommand.Path
+    }
+
     Write-Host "Requesting administrative privileges. Accept the Windows prompt to continue this run." -ForegroundColor Yellow
     $processInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $processInfo.FileName = "powershell.exe"
-    $processInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ResumeApply -ResumeStateFile `"$resumeFile`""
+    if ($scriptPath -and (Test-Path $scriptPath)) {
+        $processInfo.FileName = "powershell.exe"
+        $processInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$scriptPath`" -ResumeApply -ResumeStateFile `"$resumeFile`""
+    } else {
+        # No resolvable script on disk (web-launched via iex). Re-fetch the canonical script,
+        # save it locally, and relaunch elevated with the resume handoff.
+        $webScript = Join-Path $AppDataDir "JDownloader 2 Ultimate Manager.ps1"
+        try {
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/SysAdminDoc/JDownloader-2-Ultimate-Manager/refs/heads/main/JDownloader%202%20Ultimate%20Manager.ps1" `
+                -OutFile $webScript -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+        } catch {
+            Log-Status "Could not stage the script for elevation (web fetch failed). No changes were written." "ERROR"
+            return $false
+        }
+        $processInfo.FileName = "powershell.exe"
+        $processInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$webScript`" -ResumeApply -ResumeStateFile `"$resumeFile`""
+    }
     $processInfo.Verb = "RunAs"
     try {
         [System.Diagnostics.Process]::Start($processInfo) | Out-Null
@@ -483,14 +668,44 @@ function Request-ElevatedApply {
     }
 }
 
+function Test-LooksLikeHtmlErrorPage {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $false }
+    try {
+        $fs = [System.IO.File]::OpenRead($Path)
+        try {
+            $buf = New-Object byte[] 512
+            $read = $fs.Read($buf, 0, $buf.Length)
+            if ($read -le 0) { return $false }
+            $head = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read).ToLowerInvariant().TrimStart()
+            return ($head.StartsWith('<!doctype html') -or $head.StartsWith('<html') -or $head.StartsWith('<?xml'))
+        } finally { $fs.Dispose() }
+    } catch { return $false }
+}
+
 function Download-File {
-    param([string]$Url, [string]$Destination)
+    param(
+        [string]$Url,
+        [string]$Destination,
+        [int]$MinBytes = 1024,
+        [switch]$AllowSmall
+    )
+    if ([string]::IsNullOrWhiteSpace($Url) -or [string]::IsNullOrWhiteSpace($Destination)) {
+        Log-Status "Download-File called with empty URL or destination." "ERROR"
+        return $false
+    }
+    if ($AllowSmall) { $MinBytes = 1 }
+
+    # Remove any prior stale file so a failed download never appears as success.
+    if (Test-Path $Destination) {
+        try { Remove-Item $Destination -Force -ErrorAction Stop } catch {}
+    }
+
     Log-Status "Downloading: $(Split-Path $Destination -Leaf)"
-    
+
     $maxRetries = 3
     $attempt = 0
     $success = $false
-
     while ($attempt -lt $maxRetries -and -not $success) {
         $attempt++
         try {
@@ -503,25 +718,29 @@ function Download-File {
                 Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
                 $success = $true
             } catch {
-                Log-Status "WebClient attempt $attempt failed from $Url. $_" "WARN"
+                Log-Status "HTTP attempt $attempt failed from $Url. $_" "WARN"
             }
         }
-        
         if (-not $success -and $attempt -lt $maxRetries) {
-            $delay = $attempt * 1500
-            Start-Sleep -Milliseconds $delay
+            Start-Sleep -Milliseconds ($attempt * 1500)
         }
     }
-    
-    # Added file size/integrity check (basic)
+
     if ($success -and (Test-Path $Destination)) {
         $size = (Get-Item $Destination).Length
-        if ($size -lt 1024) { 
-            Log-Status "Downloaded file is suspiciously small ($size bytes). marking failed." "ERROR"
-            return $false 
+        if ($size -lt $MinBytes) {
+            Log-Status "Downloaded file is suspiciously small ($size bytes) for $Url. Marking failed." "ERROR"
+            try { Remove-Item $Destination -Force -ErrorAction SilentlyContinue } catch {}
+            return $false
+        }
+        # Reject content that is clearly an HTML error page served with HTTP 200 (GitHub 404, captive portals, etc.).
+        if (-not $AllowSmall -and (Test-LooksLikeHtmlErrorPage -Path $Destination)) {
+            Log-Status "Download returned an HTML page instead of the expected payload: $Url" "ERROR"
+            try { Remove-Item $Destination -Force -ErrorAction SilentlyContinue } catch {}
+            return $false
         }
     }
-    
+
     if (-not $success) { Log-Status "Download definitively failed: $Url" "ERROR" }
     return $success
 }
@@ -540,83 +759,133 @@ function Get-7Zip {
 # Enhanced Async Job Manager
 function Start-ThemeImagePreload {
     param($Definitions)
+    if (-not $Definitions) { return }
     Log-Status "Starting background theme fetch..."
-    
-    # Clean old job if exists
-    if ($GlobalJobs["ThemeFetcher"]) { Remove-Job -Job $GlobalJobs["ThemeFetcher"] -Force -ErrorAction SilentlyContinue }
-    
+
+    # Instance-unique job name so two copies of the app can't stomp on each other.
+    $jobName = "JD2UM_ThemeFetcher_$PID"
+
+    # Clean any prior job this process owns.
+    if ($GlobalJobs.ContainsKey($jobName) -and $GlobalJobs[$jobName]) {
+        try { Stop-Job -Job $GlobalJobs[$jobName] -ErrorAction SilentlyContinue } catch {}
+        try { Remove-Job -Job $GlobalJobs[$jobName] -Force -ErrorAction SilentlyContinue } catch {}
+    }
+
     $jobScript = {
         param($defs)
         $results = @{}
         $web = New-Object System.Net.WebClient
         try {
+            # Enforce TLS 1.2 in the child runspace as well.
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             foreach ($key in $defs.Keys) {
                 $url = $defs[$key].PreviewUrl
                 if ($url) {
-                    try {
-                        $bytes = $web.DownloadData($url)
-                        $results[$key] = $bytes
-                    } catch { $results[$key] = $null }
+                    try { $results[$key] = $web.DownloadData($url) }
+                    catch { $results[$key] = $null }
                 }
             }
         } finally { $web.Dispose() }
         return $results
     }
 
-    $j = Start-Job -ScriptBlock $jobScript -ArgumentList $Definitions -Name "ThemeFetcher"
-    $GlobalJobs["ThemeFetcher"] = $j
-    
+    $j = Start-Job -ScriptBlock $jobScript -ArgumentList $Definitions -Name $jobName
+    $GlobalJobs[$jobName] = $j
+
+    # Capture metadata the Tick closure needs - reduces surface for cross-scope bugs.
+    $script:ThemeFetchStart = Get-Date
+    $script:ThemeFetchTimeoutSeconds = 60
+
     $checkTimer = New-Object System.Windows.Forms.Timer
     $checkTimer.Interval = 500
-    # Use closure to ensure variable safety or explicit ref
+    $checkTimer.Tag = $jobName
     $checkTimer.Add_Tick({
-        param($sender, $e)
-        $j = Get-Job -Name "ThemeFetcher" -ErrorAction SilentlyContinue
-        if ($j -and $j.State -eq "Completed") {
-            $sender.Stop()
-            $sender.Dispose()
+        param($src, $evt)
+        $name = [string]$src.Tag
+        $jb = Get-Job -Name $name -ErrorAction SilentlyContinue
+
+        # Timeout safety so the timer doesn't poll forever if the job is stuck.
+        $elapsed = ((Get-Date) - $script:ThemeFetchStart).TotalSeconds
+        if ($elapsed -gt $script:ThemeFetchTimeoutSeconds) {
+            try { $src.Stop(); $src.Dispose() } catch {}
+            if ($jb) {
+                try { Stop-Job -Job $jb -ErrorAction SilentlyContinue } catch {}
+                try { Remove-Job -Job $jb -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            Log-Status "Theme preview fetch timed out; previews may show as loading." "WARN"
+            return
+        }
+
+        if (-not $jb) {
+            try { $src.Stop(); $src.Dispose() } catch {}
+            return
+        }
+
+        if ($jb.State -eq "Completed") {
+            try { $src.Stop(); $src.Dispose() } catch {}
             try {
-                $res = Receive-Job -Job $j
-                Remove-Job -Job $j
-                
-                # Process images
-                foreach ($k in $res.Keys) {
-                    if ($res[$k]) {
-                        $ms = New-Object System.IO.MemoryStream(,$res[$k])
-                        $img = $null
-                        $cacheImg = $null
+                $res = Receive-Job -Job $jb -ErrorAction SilentlyContinue
+                Remove-Job -Job $jb -Force -ErrorAction SilentlyContinue
+
+                if ($res) {
+                    foreach ($k in $res.Keys) {
+                        $bytes = $res[$k]
+                        if (-not $bytes) { continue }
+                        $ms = New-Object System.IO.MemoryStream(,$bytes)
+                        $img = $null; $cacheImg = $null
                         try {
                             $img = [System.Drawing.Image]::FromStream($ms)
                             $cacheImg = New-Object System.Drawing.Bitmap($img)
-                            if ($script:ThemeImageCache.ContainsKey($k)) { $script:ThemeImageCache[$k].Dispose() }
+                            if ($script:ThemeImageCache.ContainsKey($k)) {
+                                try { $script:ThemeImageCache[$k].Dispose() } catch {}
+                            }
                             $script:ThemeImageCache[$k] = $cacheImg
+                        } catch {
+                            # Bad image payload - ignore and keep whatever was there before.
                         } finally {
-                            if ($img) { $img.Dispose() }
-                            $ms.Dispose()
+                            if ($img) { try { $img.Dispose() } catch {} }
+                            try { $ms.Dispose() } catch {}
                         }
                     }
                 }
                 Log-Status "Theme previews loaded." "SUCCESS"
                 if ($CboTheme -and $CboTheme.IsHandleCreated) {
-                    $CboTheme.Invoke([Action]{ Update-ThemePreview }) 
+                    try { $CboTheme.Invoke([Action]{ Update-ThemePreview }) } catch {}
                 }
             } catch {
                 Log-Status "Error processing theme images: $_" "ERROR"
             }
-        } elseif (-not $j) {
-            $sender.Stop()
+        } elseif ($jb.State -eq "Failed" -or $jb.State -eq "Stopped") {
+            try { $src.Stop(); $src.Dispose() } catch {}
+            try { Remove-Job -Job $jb -Force -ErrorAction SilentlyContinue } catch {}
+            Log-Status "Theme preview fetch failed; previews remain unavailable." "WARN"
         }
     })
-    $GlobalTimers += $checkTimer
+    [void]$GlobalTimers.Add($checkTimer)
     $checkTimer.Start()
 }
 
 # Cleanup Helper
 function Cleanup-Resources {
     Log-Status "Cleaning up resources..."
-    foreach ($t in $GlobalTimers) { if($t){$t.Stop(); $t.Dispose()} }
-    foreach ($j in $GlobalJobs.Values) { if($j){Stop-Job $j -ErrorAction SilentlyContinue; Remove-Job $j -ErrorAction SilentlyContinue} }
-    foreach ($img in $ThemeImageCache.Values) { if($img){$img.Dispose()} }
+    foreach ($t in $GlobalTimers) {
+        if ($t) {
+            try { $t.Stop() } catch {}
+            try { $t.Dispose() } catch {}
+        }
+    }
+    foreach ($j in $GlobalJobs.Values) {
+        if ($j) {
+            try { Stop-Job $j -ErrorAction SilentlyContinue } catch {}
+            try { Remove-Job $j -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    foreach ($img in $ThemeImageCache.Values) {
+        if ($img) { try { $img.Dispose() } catch {} }
+    }
+    $ThemeImageCache.Clear()
+    $GlobalTimers.Clear()
+    $GlobalJobs.Clear()
 }
 
 function Enable-DoubleBuffer {
@@ -680,11 +949,20 @@ function Update-StatusVisual {
     }
 
     if ($StatusLabel.IsHandleCreated) {
-        $StatusLabel.Invoke([Action[string, object, string]]{
-            param($t, $c, $pfx)
-            $StatusLabel.Text = "${pfx}: $t"
-            $StatusLabel.ForeColor = $c
-        }, $Text, $statusColor, $prefix)
+        # Only marshal onto the UI thread when necessary - avoids a useless cross-thread hop
+        # (and its exception risk) when Update-StatusVisual is already running on that thread.
+        if ($StatusLabel.InvokeRequired) {
+            try {
+                $StatusLabel.Invoke([Action[string, object, string]]{
+                    param($t, $c, $pfx)
+                    $StatusLabel.Text = "${pfx}: $t"
+                    $StatusLabel.ForeColor = $c
+                }, $Text, $statusColor, $prefix)
+            } catch {}
+        } else {
+            $StatusLabel.Text = "${prefix}: $Text"
+            $StatusLabel.ForeColor = $statusColor
+        }
     } else {
         $StatusLabel.Text = "${prefix}: $Text"
         $StatusLabel.ForeColor = $statusColor
@@ -710,7 +988,11 @@ function Apply-GuiTheme {
     
     function Update-Control {
         param($ctrl)
-        
+        if (-not $ctrl) { return }
+        # A disposed control throws on property access; skip it rather than crash a re-theme
+        # (important during form teardown or if we re-theme stale refs).
+        try { if ($ctrl.IsDisposed) { return } } catch { return }
+
         $styled = $false
         if ($ctrl.Tag -is [string]) {
             switch ($ctrl.Tag) {
@@ -791,9 +1073,13 @@ function Apply-GuiTheme {
             $ctrl.ForeColor = $pal.MutedStrong
         }
         
-        if ($ctrl.Controls) {
-            foreach ($c in $ctrl.Controls) { Update-Control $c }
-        }
+        # Recurse into children. Guarded because accessing .Controls on a partially-disposed
+        # container can throw, and we don't want a half-torn form to wedge a theme-change.
+        try {
+            if ($ctrl.Controls -and $ctrl.Controls.Count -gt 0) {
+                foreach ($c in $ctrl.Controls) { Update-Control $c }
+            }
+        } catch {}
     }
 
     Update-Control $Root
@@ -822,31 +1108,47 @@ function Detect-SystemTheme {
 # 7. JDOWNLOADER LOGIC
 # ==========================================
 function Detect-JDPath {
-    $paths = @(
-        "C:\Program Files\JDownloader"
-        "C:\Program Files (x86)\JDownloader"
-        "$env:LOCALAPPDATA\JDownloader 2"
-        "$env:LOCALAPPDATA\JDownloader 2.0"
-        "$env:USERPROFILE\AppData\Local\JDownloader 2"
-        "$env:USERPROFILE\AppData\Local\JDownloader 2.0"
-        "$env:USERPROFILE\JDownloader 2"
-        "$env:USERPROFILE\JDownloader"
-        "$env:APPDATA\JDownloader 2"
-        "D:\JDownloader 2"
-        "D:\JDownloader"
-        "$env:ProgramData\JDownloader 2"
+    # Build candidate list from environment-derived roots (avoids hardcoded C:/D: assumptions).
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $roots = @(
+        $env:ProgramFiles
+        ${env:ProgramFiles(x86)}
+        $env:LOCALAPPDATA
+        $env:APPDATA
+        $env:USERPROFILE
+        $env:ProgramData
     )
-    foreach ($p in $paths) { if (Test-Path (Join-Path $p "JDownloader2.exe")) { return $p } }
-    # Fallback: check registry for install location
+    foreach ($root in $roots) {
+        if ([string]::IsNullOrWhiteSpace($root)) { continue }
+        foreach ($leaf in 'JDownloader 2','JDownloader 2.0','JDownloader') {
+            $candidates.Add((Join-Path $root $leaf))
+        }
+    }
+    # Common alternate drives - only probe drives that actually exist.
+    foreach ($drive in 'D:','E:','F:') {
+        if (Test-Path (Join-Path $drive '\')) {
+            $candidates.Add(($drive + '\JDownloader 2'))
+            $candidates.Add(($drive + '\JDownloader'))
+        }
+    }
+
+    foreach ($p in ($candidates | Select-Object -Unique)) {
+        try { if (Test-Path (Join-Path $p 'JDownloader2.exe')) { return $p } } catch {}
+    }
+
+    # Registry fallback for non-standard install locations.
     try {
-        $regPaths = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*")
+        $regPaths = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
         foreach ($rp in $regPaths) {
-            $entries = Get-ItemProperty -Path $rp -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "JDownloader" -and $_.InstallLocation }
-            if ($entries) {
-                foreach ($e in $entries) {
-                    $loc = $e.InstallLocation.TrimEnd('\')
-                    if (Test-Path (Join-Path $loc "JDownloader2.exe")) { return $loc }
-                }
+            $entries = Get-ItemProperty -Path $rp -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -match 'JDownloader' -and $_.InstallLocation }
+            foreach ($e in $entries) {
+                $loc = ([string]$e.InstallLocation).TrimEnd('\')
+                if (-not [string]::IsNullOrWhiteSpace($loc) -and (Test-Path (Join-Path $loc 'JDownloader2.exe'))) { return $loc }
             }
         }
     } catch {}
@@ -857,55 +1159,106 @@ function Detect-JDPath {
 function Kill-JDownloader {
     Log-Status "Terminating JDownloader processes..."
     $procs = Get-Process -Name "javaw", "JDownloader2" -ErrorAction SilentlyContinue
-    
     foreach ($p in $procs) {
         try {
-            $path = $p.MainModule.FileName
-            if ($path -match "JDownloader") {
+            # Only kill javaw instances that belong to a JDownloader install (MainModule may be blocked
+            # for 64-bit processes when running non-elevated - fall back to process name check).
+            $path = $null
+            try { $path = $p.MainModule.FileName } catch { $path = $null }
+            $shouldKill = $false
+            if ($path -and $path -match 'JDownloader') {
+                $shouldKill = $true
+            } elseif ($p.ProcessName -eq 'JDownloader2') {
+                $shouldKill = $true
+            }
+            if ($shouldKill) {
                 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             }
-        } catch {
-             if ($p.ProcessName -eq "JDownloader2") { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-        }
+        } catch {}
     }
     Start-Sleep -Seconds 1
 }
 
-# Exclude more temp folders
 function Backup-JD {
-    param([string]$InstallPath)
+    param([string]$InstallPath, [int]$KeepCount = 10)
+    if ([string]::IsNullOrWhiteSpace($InstallPath)) { return }
+    $cfgDir = Join-Path $InstallPath 'cfg'
+    if (-not (Test-Path $cfgDir)) { return }
     $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-    $backupRoot = "$InstallPath\cfg-backup\$stamp"
-    if (Test-Path "$InstallPath\cfg") {
-        New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-        Get-ChildItem "$InstallPath\cfg" -Exclude "tmp","logs","*.part","*.tmp","linkcollector" | Copy-Item -Destination $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    $backupParent = Join-Path $InstallPath 'cfg-backup'
+    $backupRoot   = Join-Path $backupParent $stamp
+    try {
+        New-Item -ItemType Directory -Path $backupRoot -Force -ErrorAction Stop | Out-Null
+        Get-ChildItem $cfgDir -Exclude "tmp","logs","*.part","*.tmp","linkcollector" -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {
+        Log-Status "Config backup skipped: $_" "WARN"
+        return
     }
+
+    # Retention: keep only the N most recent backup folders.
+    try {
+        Get-ChildItem $backupParent -Directory -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -Skip $KeepCount |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {}
 }
 
 function Task-ExtractIcons {
     param($ZipUrl, $InstallPath, $TargetIconSet)
-    $localZip = "$WorkDir\icons.7z"
-    $extractPath = "$WorkDir\IconsTemp"
+    if ([string]::IsNullOrWhiteSpace($ZipUrl) -or [string]::IsNullOrWhiteSpace($InstallPath) -or [string]::IsNullOrWhiteSpace($TargetIconSet)) {
+        Log-Status "Task-ExtractIcons: missing required argument." "WARN"
+        return
+    }
+    $localZip    = Join-Path $WorkDir 'icons.7z'
+    $extractPath = Join-Path $WorkDir 'IconsTemp'
     if (-not (Download-File -Url $ZipUrl -Destination $localZip)) { return }
     $seven = Get-7Zip
     if (-not $seven) { Log-Status "Cannot extract icons without 7zr.exe." "ERROR"; return }
     if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue }
-    Start-Process $seven -ArgumentList "x `"$localZip`" -o`"$extractPath`" -y" -Wait -WindowStyle Hidden
-    $foundImages = Get-ChildItem -Path $extractPath -Recurse -Directory | Where-Object { $_.Name -eq "images" } | Select-Object -First 1
-    if ($foundImages) {
-        $targetImages = "$InstallPath\themes\$TargetIconSet\org\jdownloader\images"
-        if (-not (Test-Path $targetImages)) { New-Item -ItemType Directory -Path $targetImages -Force | Out-Null }
-        Copy-Item "$($foundImages.FullName)\*" $targetImages -Recurse -Force -ErrorAction SilentlyContinue
+
+    $proc = Start-Process -FilePath $seven -ArgumentList @('x', "`"$localZip`"", "-o`"$extractPath`"", '-y') -Wait -WindowStyle Hidden -PassThru
+    if (-not $proc -or ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1)) {
+        $code = if ($proc) { $proc.ExitCode } else { 'n/a' }
+        Log-Status "Icon archive extraction failed (7zr exit=$code). Skipping icon copy." "ERROR"
+        return
+    }
+
+    $foundImages = Get-ChildItem -Path $extractPath -Recurse -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq 'images' } | Select-Object -First 1
+    if (-not $foundImages) {
+        Log-Status "Icon archive did not contain an 'images' folder. Skipping icon copy." "WARN"
+        return
+    }
+    $targetImages = Join-Path $InstallPath "themes\$TargetIconSet\org\jdownloader\images"
+    if (-not (Test-Path $targetImages)) {
+        try { New-Item -ItemType Directory -Path $targetImages -Force | Out-Null } catch { Log-Status "Could not create icon folder $targetImages." "WARN"; return }
+    }
+    try {
+        Copy-Item "$($foundImages.FullName)\*" $targetImages -Recurse -Force -ErrorAction Stop
+    } catch {
+        Log-Status ("Failed to copy icon files into {0}: {1}" -f $targetImages, $_) "WARN"
+    } finally {
+        # Remove the unpacked 7z staging folder so TEMP doesn't accumulate gigabytes of icon sets.
+        if (Test-Path $extractPath) {
+            try { Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
     }
 }
 
 function Task-PatchLaf {
     param($JsonPath, $IconSetId, $WindowDecorations)
+    if ([string]::IsNullOrWhiteSpace($JsonPath) -or -not (Test-Path $JsonPath)) {
+        Log-Status "Task-PatchLaf: theme JSON not found at $JsonPath" "WARN"; return
+    }
     try {
-        $content = Get-Content -Path $JsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if (-not $content.PSObject.Properties["iconsetid"]) { $content | Add-Member -MemberType NoteProperty -Name "iconsetid" -Value $IconSetId } else { $content.iconsetid = $IconSetId }
-        if (-not $content.PSObject.Properties["windowdecorationenabled"]) { $content | Add-Member -MemberType NoteProperty -Name "windowdecorationenabled" -Value $WindowDecorations } else { $content.windowdecorationenabled = $WindowDecorations }
-        $content | ConvertTo-Json -Depth 100 | Set-Content $JsonPath -Encoding UTF8
+        $content = Get-Content -Path $JsonPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+        if (-not $content.PSObject.Properties["iconsetid"]) { $content | Add-Member -MemberType NoteProperty -Name "iconsetid" -Value $IconSetId }
+        else { $content.iconsetid = $IconSetId }
+        if (-not $content.PSObject.Properties["windowdecorationenabled"]) { $content | Add-Member -MemberType NoteProperty -Name "windowdecorationenabled" -Value $WindowDecorations }
+        else { $content.windowdecorationenabled = $WindowDecorations }
+        [void](Write-JsonAtomic -Path $JsonPath -Payload $content)
     } catch { Log-Status "Failed to patch LAF config: $_" "WARN" }
 }
 
@@ -932,32 +1285,129 @@ function Task-NukeBanners {
 
 function Task-PatchExeIcon {
     param($InstallPath)
+    if ([string]::IsNullOrWhiteSpace($InstallPath) -or -not (Test-Path $InstallPath)) {
+        Log-Status "Cannot apply icon: install path missing." "WARN"; return
+    }
     Log-Status "Applying dark icon..."
-    $ResHackerZip = "$WorkDir\resource_hacker.zip"; $ResHackerDir = "$WorkDir\ResourceHacker"; $IconFile = "$WorkDir\jd_dark.ico"
+    $ResHackerZip = Join-Path $WorkDir 'resource_hacker.zip'
+    $ResHackerDir = Join-Path $WorkDir 'ResourceHacker'
+    $IconFile     = Join-Path $WorkDir 'jd_dark.ico'
     if (-not (Download-File -Url "https://www.angusj.com/resourcehacker/resource_hacker.zip" -Destination $ResHackerZip)) { return }
     if (-not (Download-File -Url "https://raw.githubusercontent.com/SysAdminDoc/JDownloaderDarkMode/refs/heads/main/Icons/icon.ico" -Destination $IconFile)) { return }
-    if (-not (Test-Path $ResHackerDir)) { Expand-Archive -Path $ResHackerZip -DestinationPath $ResHackerDir -Force }
-    $ResHackerExe = "$ResHackerDir\ResourceHacker.exe"
-    if (Test-Path $ResHackerExe) {
-        $targets = @("$InstallPath\JDownloader2.exe", "$InstallPath\Uninstall JDownloader.exe")
-        foreach ($exe in $targets) {
-            # Check write permission/existence first
-            if (Test-Path $exe) {
+    if (-not (Test-Path $ResHackerDir)) {
+        try { Expand-Archive -Path $ResHackerZip -DestinationPath $ResHackerDir -Force -ErrorAction Stop }
+        catch { Log-Status "Failed to unpack Resource Hacker: $_" "ERROR"; return }
+    }
+    $ResHackerExe = Join-Path $ResHackerDir 'ResourceHacker.exe'
+    if (-not (Test-Path $ResHackerExe)) { Log-Status "Resource Hacker executable not found after extract." "ERROR"; return }
+
+    $targets = @(
+        (Join-Path $InstallPath 'JDownloader2.exe')
+        (Join-Path $InstallPath 'Uninstall JDownloader.exe')
+    )
+    foreach ($exe in $targets) {
+        if (-not (Test-Path $exe)) { continue }
+        $bak = "$exe.bak"
+        try {
+            Stop-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($exe)) -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+
+            # Preserve the original exactly once, then always operate from the pristine backup.
+            if (-not (Test-Path $bak)) {
+                Move-Item -Path $exe -Destination $bak -Force -ErrorAction Stop
+            } elseif (Test-Path $exe) {
+                # Keep the currently-installed exe around in case the patch fails mid-flight.
+                $currentSave = "$exe.prepatch"
+                try { Move-Item -Path $exe -Destination $currentSave -Force -ErrorAction Stop } catch { Remove-Item $exe -Force -ErrorAction SilentlyContinue }
+            }
+
+            $rhArgs = @('-open', "`"$bak`"", '-save', "`"$exe`"", '-action', 'addoverwrite', '-res', "`"$IconFile`"", '-mask', 'ICONGROUP,MAINICON,0')
+            $proc = Start-Process -FilePath $ResHackerExe -ArgumentList $rhArgs -Wait -WindowStyle Hidden -PassThru
+            $patched = ($proc -and $proc.ExitCode -eq 0 -and (Test-Path $exe) -and ((Get-Item $exe).Length -gt 0))
+
+            if (-not $patched) {
+                Log-Status "Icon patch failed for $exe (exit=$($proc.ExitCode)). Rolling back." "WARN"
+                try { if (Test-Path $exe) { Remove-Item $exe -Force -ErrorAction SilentlyContinue } } catch {}
                 try {
-                    Stop-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($exe)) -Force -ErrorAction SilentlyContinue; Start-Sleep 1
-                    $bak = "$exe.bak"; if (-not (Test-Path $bak)) { Move-Item -Path $exe -Destination $bak -Force } else { Remove-Item $exe -Force -ErrorAction SilentlyContinue }
-                    Start-Process -FilePath $ResHackerExe -ArgumentList "-open `"$bak`" -save `"$exe`" -action addoverwrite -res `"$IconFile`" -mask ICONGROUP,MAINICON,0" -Wait -WindowStyle Hidden
-                } catch { Log-Status "Failed to patch $exe - Access Denied?" "WARN" }
+                    if (Test-Path "$exe.prepatch") {
+                        Move-Item -Path "$exe.prepatch" -Destination $exe -Force -ErrorAction SilentlyContinue
+                    } elseif (Test-Path $bak) {
+                        Copy-Item -Path $bak -Destination $exe -Force -ErrorAction SilentlyContinue
+                    }
+                } catch {}
+            } else {
+                try { if (Test-Path "$exe.prepatch") { Remove-Item "$exe.prepatch" -Force -ErrorAction SilentlyContinue } } catch {}
+            }
+        } catch {
+            Log-Status ("Failed to patch {0}: {1}" -f $exe, $_) "WARN"
+            # Final safety net: if we lost the exe completely, restore from .bak.
+            if (-not (Test-Path $exe) -and (Test-Path $bak)) {
+                try { Copy-Item -Path $bak -Destination $exe -Force -ErrorAction SilentlyContinue } catch {}
             }
         }
-        # Refresh icon cache without killing explorer
-        try { Start-Process "ie4uinit.exe" -ArgumentList "-show" -WindowStyle Hidden -ErrorAction SilentlyContinue } catch {}
+    }
+    try { Start-Process "ie4uinit.exe" -ArgumentList "-show" -WindowStyle Hidden -ErrorAction SilentlyContinue } catch {}
+}
+
+function Write-JsonAtomic {
+    # Atomic JSON write: serialize, write to .tmp, then move into place. Never leaves a
+    # half-written config if we're interrupted mid-write.
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]$Payload,
+        [int]$Depth = 100
+    )
+    $parent = Split-Path -Path $Path -Parent
+    if ($parent -and -not (Test-Path $parent)) {
+        try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {}
+    }
+    $tmp = "$Path.tmp"
+    try {
+        $json = $Payload | ConvertTo-Json -Depth $Depth
+        Set-Content -Path $tmp -Value $json -Encoding UTF8 -ErrorAction Stop
+        Move-Item -Path $tmp -Destination $Path -Force -ErrorAction Stop
+        return $true
+    } catch {
+        try { Remove-Item $tmp -Force -ErrorAction SilentlyContinue } catch {}
+        Log-Status ("Failed to write {0}: {1}" -f $Path, $_) "WARN"
+        return $false
     }
 }
 
 function Set-JsonConfig {
+    # Merge caller-supplied keys INTO the existing config (when one exists) instead of
+    # overwriting the whole file. This preserves unrelated user customizations that
+    # JDownloader persists into the same JSON, and still writes a fresh file on first use.
     param($Path, $DataHash)
-    try { $DataHash | ConvertTo-Json -Depth 100 | Set-Content $Path -Encoding UTF8 } catch { Log-Status "Failed to write config $Path : $_" "WARN" }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    if (-not $DataHash) { return }
+
+    $merged = [ordered]@{}
+    if (Test-Path $Path) {
+        try {
+            $existing = Get-Content -Path $Path -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($existing -is [psobject]) {
+                foreach ($prop in $existing.PSObject.Properties) {
+                    $merged[$prop.Name] = $prop.Value
+                }
+            }
+        } catch {
+            # Existing file is unreadable; back it up and rewrite fresh so the app recovers.
+            try {
+                $bad = "$Path.bad-$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+                Move-Item -Path $Path -Destination $bad -Force -ErrorAction SilentlyContinue
+                Log-Status ("Config {0} was unreadable and was quarantined: {1}" -f (Split-Path $Path -Leaf), $bad) "WARN"
+            } catch {}
+        }
+    }
+
+    if ($DataHash -is [System.Collections.IDictionary]) {
+        foreach ($k in $DataHash.Keys) { $merged[$k] = $DataHash[$k] }
+    } elseif ($DataHash -is [psobject]) {
+        foreach ($p in $DataHash.PSObject.Properties) { $merged[$p.Name] = $p.Value }
+    }
+
+    [void](Write-JsonAtomic -Path $Path -Payload $merged)
 }
 
 function Task-DeepHardening {
@@ -989,14 +1439,7 @@ function Task-DeepHardening {
 
     # Privacy: disable clipboard monitoring if requested
     if ($HardenState -and $HardenState.DisableClipboard) {
-        $guiFile = "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json"
-        if (Test-Path $guiFile) {
-            try {
-                $gui = Get-Content $guiFile -Raw -Encoding UTF8 | ConvertFrom-Json
-                $gui.clipboardmonitored = $false
-                $gui | ConvertTo-Json -Depth 100 | Set-Content $guiFile -Encoding UTF8
-            } catch { Log-Status "Failed to disable clipboard monitoring: $_" "WARN" }
-        }
+        Set-JsonConfig -Path (Join-Path $cfgPath 'org.jdownloader.settings.GraphicalUserInterfaceSettings.json') -DataHash @{ "clipboardmonitored" = $false }
     }
 
     # Silent mode config
@@ -1031,57 +1474,212 @@ function Task-Install {
     if ($Source -eq "GitHub") {
         $seven = Get-7Zip
         if (-not $seven) { Log-Status "Cannot extract installer without 7zr.exe." "ERROR"; return $false }
-        $baseUrl = "https://github.com/SysAdminDoc/JDownloaderDarkMode/raw/main/Installer/installer.7z"
-        for ($i = 1; $i -le 7; $i++) {
-            $part = ".{0:D3}" -f $i
-            if (-not (Download-File -Url "$baseUrl$part" -Destination "$WorkDir\installer.7z$part")) {
-                Log-Status "Installer download failed on part $part." "ERROR"
-                return $false
+
+        # Wipe any stale installer parts / extract folder from a previous (possibly failed) run.
+        try {
+            Get-ChildItem -Path $WorkDir -Filter 'installer.7z.*' -File -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+        } catch {}
+        $installerExtract = Join-Path $WorkDir 'Installer'
+        if (Test-Path $installerExtract) {
+            try { Remove-Item $installerExtract -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
+
+        # Prefer the locally-bundled installer (70 MB of .7z parts shipped alongside the script)
+        # when present. This makes the clean-install flow work fully offline and avoids the
+        # network hop for users who cloned/downloaded the repo whole.
+        $usedLocal = $false
+        if ($PSScriptRoot) {
+            $localInstallerDir = Join-Path $PSScriptRoot 'Installer'
+            if (Test-Path $localInstallerDir) {
+                $localParts = 1..7 | ForEach-Object { Join-Path $localInstallerDir ("installer.7z.{0:D3}" -f $_) }
+                $allLocalPresent = $true
+                foreach ($lp in $localParts) { if (-not (Test-Path $lp)) { $allLocalPresent = $false; break } }
+                if ($allLocalPresent) {
+                    Log-Status "Using bundled installer from the script folder." "INFO"
+                    foreach ($lp in $localParts) {
+                        $target = Join-Path $WorkDir (Split-Path $lp -Leaf)
+                        try { Copy-Item -Path $lp -Destination $target -Force -ErrorAction Stop } catch {
+                            Log-Status ("Failed to stage bundled installer part: {0}" -f $_) "WARN"
+                            $allLocalPresent = $false
+                            break
+                        }
+                    }
+                    if ($allLocalPresent) { $usedLocal = $true }
+                }
             }
         }
-        Start-Process $seven -ArgumentList "x `"$WorkDir\installer.7z.001`" -o`"$WorkDir\Installer`" -y" -Wait -WindowStyle Hidden
-        $setup = Get-ChildItem "$WorkDir\Installer" -Filter "*.exe" -Recurse | Select-Object -First 1
-        if ($setup) {
-            Start-Process $setup.FullName -ArgumentList "-q" -Wait
-            return $true
+
+        if (-not $usedLocal) {
+            $baseUrl = "https://github.com/SysAdminDoc/JDownloaderDarkMode/raw/main/Installer/installer.7z"
+            for ($i = 1; $i -le 7; $i++) {
+                $part = ".{0:D3}" -f $i
+                $destPart = Join-Path $WorkDir "installer.7z$part"
+                if (-not (Download-File -Url "$baseUrl$part" -Destination $destPart)) {
+                    Log-Status "Installer download failed on part $part." "ERROR"
+                    return $false
+                }
+            }
         }
-        Log-Status "Installer extraction completed, but no setup executable was found." "ERROR"
+
+        # Verify all 7 parts landed on disk before asking 7-Zip to extract.
+        $missing = 1..7 | Where-Object { -not (Test-Path (Join-Path $WorkDir ("installer.7z.{0:D3}" -f $_))) }
+        if ($missing) {
+            Log-Status ("Installer is missing part(s): {0}" -f ($missing -join ', ')) "ERROR"
+            return $false
+        }
+
+        $firstPart = Join-Path $WorkDir 'installer.7z.001'
+        $proc = Start-Process -FilePath $seven -ArgumentList @('x', "`"$firstPart`"", "-o`"$installerExtract`"", '-y') -Wait -WindowStyle Hidden -PassThru
+        if (-not $proc -or ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1)) {
+            $code = if ($proc) { $proc.ExitCode } else { 'n/a' }
+            Log-Status "Installer extraction failed (7zr exit=$code)." "ERROR"
+            return $false
+        }
+
+        $setup = Get-ChildItem $installerExtract -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object Length -Descending | Select-Object -First 1
+        if (-not $setup) {
+            Log-Status "Installer extraction completed, but no setup executable was found." "ERROR"
+            return $false
+        }
+
+        $setupProc = Start-Process -FilePath $setup.FullName -ArgumentList "-q" -Wait -PassThru
+        # Post-condition: detect a resulting install. Don't trust installer exit codes alone.
+        $detected = Detect-JDPath
+        if (-not $detected) {
+            $exit = if ($setupProc) { $setupProc.ExitCode } else { 'n/a' }
+            Log-Status "Setup finished (exit=$exit) but no JDownloader installation was detected afterwards." "WARN"
+            return $false
+        }
+        return $true
     } elseif ($Source -eq "Mega") {
         Start-Process "https://mega.nz/file/PQ0XRIrA#-uuhLXSc_nPfotXWfBWDZRx90Gnehx2_Mx_JVufzfdM"
         [System.Windows.Forms.MessageBox]::Show("Download the file from Mega, then click OK.", "Manual Download") | Out-Null
-        $f = Get-ChildItem "$env:USERPROFILE\Downloads" -Filter "JDownloader*Setup*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($f) {
-            Start-Process $f.FullName -ArgumentList "-q" -Wait
-            return $true
+
+        # Accept the user's Downloads folder as configured in the Shell; fall back to USERPROFILE\Downloads.
+        $dl = try { [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile) } catch { $env:USERPROFILE }
+        $downloadsFolder = Join-Path $dl 'Downloads'
+        if (-not (Test-Path $downloadsFolder)) {
+            Log-Status "Downloads folder not found - cannot auto-pick the Mega installer." "ERROR"
+            return $false
         }
-        Log-Status "Mega installer was not found in Downloads after the manual step." "ERROR"
+        # Only consider files created in the last hour to avoid launching an old/unrelated installer.
+        $cutoff = (Get-Date).AddHours(-1)
+        $f = Get-ChildItem $downloadsFolder -Filter "JDownloader*Setup*.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -ge $cutoff } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $f) {
+            Log-Status "Mega installer was not found in Downloads after the manual step." "ERROR"
+            return $false
+        }
+        Start-Process $f.FullName -ArgumentList "-q" -Wait
+        if (-not (Detect-JDPath)) {
+            Log-Status "Mega setup finished but JDownloader was not detected afterwards." "WARN"
+            return $false
+        }
+        return $true
     }
     return $false
 }
 
+function Test-IsSafeInstallRoot {
+    # Reject paths that are clearly not a JDownloader install folder before recursive deletion.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try { $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path } catch { return $false }
+    if ([string]::IsNullOrWhiteSpace($resolved)) { return $false }
+    # Refuse drive roots, Windows system paths, and user-profile roots.
+    $forbidden = @(
+        $env:SystemRoot
+        $env:ProgramFiles
+        ${env:ProgramFiles(x86)}
+        $env:USERPROFILE
+        $env:LOCALAPPDATA
+        $env:APPDATA
+        $env:ProgramData
+    ) | Where-Object { $_ }
+    foreach ($f in $forbidden) {
+        if ($resolved.TrimEnd('\').Equals($f.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    }
+    if ($resolved -match '^[A-Za-z]:\\?$') { return $false }          # drive root like C:\
+    if ($resolved.Length -lt 6) { return $false }                     # too short to be safe
+    # Require a file that identifies this as a JDownloader install (or an uninstaller stub).
+    $jdMarker = Join-Path $resolved 'JDownloader2.exe'
+    $uninstallMarker = Join-Path $resolved 'Uninstall JDownloader.exe'
+    return ((Test-Path $jdMarker) -or (Test-Path $uninstallMarker))
+}
+
 function Task-FullUninstall {
     param($InstallPath)
+    if (-not (Test-IsSafeInstallRoot -Path $InstallPath)) {
+        Log-Status "Refused to uninstall: '$InstallPath' does not look like a JDownloader folder." "ERROR"
+        return
+    }
     Kill-JDownloader
-    if (Test-Path "$InstallPath\Uninstall JDownloader.exe") { Start-Process -FilePath "$InstallPath\Uninstall JDownloader.exe" -ArgumentList "-q" -Wait }
-    Start-Sleep 2; Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
+    $uninstaller = Join-Path $InstallPath 'Uninstall JDownloader.exe'
+    if (Test-Path $uninstaller) {
+        try { Start-Process -FilePath $uninstaller -ArgumentList "-q" -Wait -ErrorAction Stop } catch { Log-Status "Uninstaller exited abnormally: $_" "WARN" }
+    }
+    Start-Sleep 2
+    try {
+        Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
+    } catch {
+        Log-Status "Some files could not be removed (locked or in use). Residual folder may remain: $_" "WARN"
+    }
 }
 
 function Trigger-Update {
     param($InstallPath)
-    if (Test-Path "$InstallPath\JDownloader2.exe") { Start-Process -FilePath "$InstallPath\JDownloader2.exe" -ArgumentList "-update" }
+    $exe = Join-Path $InstallPath 'JDownloader2.exe'
+    if (-not (Test-Path $exe)) {
+        Log-Status "Skipping post-run update: JDownloader2.exe not found." "WARN"
+        return
+    }
+    try {
+        Start-Process -FilePath $exe -ArgumentList '-update' -ErrorAction Stop
+        Log-Status "JDownloader update launched." "INFO"
+    } catch {
+        Log-Status ("Failed to launch JDownloader update: {0}" -f $_) "WARN"
+    }
 }
 
 function Run-Audit {
     param($InstallPath)
+    if ([string]::IsNullOrWhiteSpace($InstallPath) -or -not (Test-Path $InstallPath)) {
+        Log-Status "Audit aborted: install path is invalid." "ERROR"
+        return
+    }
+
     $issues = 0
     $warnings = @()
+    $notes = @()
 
-    # Core files
-    if (-not (Test-Path "$InstallPath\JDownloader2.exe")) { $issues++; $warnings += "JDownloader2.exe missing" }
-    if (-not (Test-Path "$InstallPath\JDownloader.jar")) { $issues++; $warnings += "JDownloader.jar missing (core engine)" }
+    if (-not (Test-Path (Join-Path $InstallPath 'JDownloader2.exe'))) { $issues++; $warnings += "JDownloader2.exe missing" }
+    if (-not (Test-Path (Join-Path $InstallPath 'JDownloader.jar'))) { $issues++; $warnings += "JDownloader.jar missing (core engine)" }
 
-    # Config directory
-    $cfgPath = "$InstallPath\cfg"
+    # Bundled JRE is preferred; otherwise surface a note about system Java.
+    $bundledJava = Join-Path $InstallPath 'jre\bin\java.exe'
+    $bundledJavaw = Join-Path $InstallPath 'jre\bin\javaw.exe'
+    if ((Test-Path $bundledJava) -or (Test-Path $bundledJavaw)) {
+        $notes += "Bundled JRE detected."
+    } else {
+        $hasSystemJava = $false
+        try {
+            $cmd = Get-Command -Name 'javaw' -ErrorAction SilentlyContinue
+            if ($cmd) { $hasSystemJava = $true }
+            if (-not $hasSystemJava -and $env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\javaw.exe'))) {
+                $hasSystemJava = $true
+            }
+        } catch {}
+        if (-not $hasSystemJava) {
+            $warnings += "No bundled JRE and no system Java found (JDownloader may fail to launch)."
+        } else {
+            $notes += "Using system Java."
+        }
+    }
+
+    $cfgPath = Join-Path $InstallPath 'cfg'
     if (-not (Test-Path $cfgPath)) { $issues++; $warnings += "cfg/ directory missing entirely" }
     else {
         $criticalConfigs = @(
@@ -1090,48 +1688,78 @@ function Run-Audit {
             "org.jdownloader.gui.jdtrayicon.TrayExtension.json"
         )
         foreach ($cfg in $criticalConfigs) {
-            if (-not (Test-Path "$cfgPath\$cfg")) { $issues++; $warnings += "Missing: $cfg" }
+            $cfgFile = Join-Path $cfgPath $cfg
+            if (-not (Test-Path $cfgFile)) { $issues++; $warnings += "Missing: $cfg" }
             else {
-                try { $null = Get-Content "$cfgPath\$cfg" -Raw | ConvertFrom-Json } catch { $issues++; $warnings += "Corrupt JSON: $cfg" }
+                try { $null = Get-Content $cfgFile -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop } catch { $issues++; $warnings += "Corrupt JSON: $cfg" }
             }
         }
 
-        # Check for leftover tmp files
-        $tmpFiles = Get-ChildItem "$cfgPath" -Filter "*.tmp" -ErrorAction SilentlyContinue
+        $tmpFiles = Get-ChildItem $cfgPath -Filter "*.tmp" -ErrorAction SilentlyContinue
         if ($tmpFiles -and $tmpFiles.Count -gt 0) { $warnings += "$($tmpFiles.Count) stale .tmp files in cfg/" }
 
-        # Check LAF directory
-        $lafPath = "$cfgPath\laf"
+        $lafPath = Join-Path $cfgPath 'laf'
         if (Test-Path $lafPath) {
             $lafFiles = Get-ChildItem $lafPath -Filter "*.json" -ErrorAction SilentlyContinue
             if (-not $lafFiles -or $lafFiles.Count -eq 0) { $warnings += "laf/ directory exists but contains no theme files" }
         }
     }
 
-    # Check for update artifacts
-    if (Test-Path "$InstallPath\update\versioninfo\JD\rev") {
-        $rev = (Get-Content "$InstallPath\update\versioninfo\JD\rev" -ErrorAction SilentlyContinue).Trim()
-        if ($rev) { Log-Status "JDownloader core revision: $rev" "INFO" }
+    # Disk free-space sanity check: JDownloader defaults to requiring 512 MiB free.
+    try {
+        $drive = Split-Path $InstallPath -Qualifier
+        if ($drive) {
+            $psDrive = Get-PSDrive -Name $drive.TrimEnd(':') -ErrorAction SilentlyContinue
+            if ($psDrive -and $psDrive.Free -lt 1GB) {
+                $warnings += ("Low free space on {0} ({1:N1} MB) - JDownloader may pause downloads." -f $drive, ($psDrive.Free / 1MB))
+            }
+        }
+    } catch {}
+
+    # Update artifact
+    $revFile = Join-Path $InstallPath 'update\versioninfo\JD\rev'
+    if (Test-Path $revFile) {
+        $rev = try { (Get-Content $revFile -ErrorAction SilentlyContinue).Trim() } catch { $null }
+        if ($rev) { $notes += "Core revision: $rev" }
     }
 
-    # Report
+    # Report - include notes even on success so the log is informative.
+    $summarySuffix = if ($notes.Count -gt 0) { " Notes: $($notes -join '; ')" } else { '' }
     if ($issues -gt 0) {
-        Log-Status "Audit found $issues issue(s): $($warnings -join '; ')" "WARN"
+        Log-Status ("Audit found {0} issue(s): {1}.{2}" -f $issues, ($warnings -join '; '), $summarySuffix) "WARN"
     } elseif ($warnings.Count -gt 0) {
-        Log-Status "Audit passed with notes: $($warnings -join '; ')" "INFO"
+        Log-Status ("Audit passed with notes: {0}.{1}" -f ($warnings -join '; '), $summarySuffix) "INFO"
     } else {
-        Log-Status "Audit passed. All critical files and configs are intact." "SUCCESS"
+        Log-Status ("Audit passed. All critical files and configs are intact.{0}" -f $summarySuffix) "SUCCESS"
     }
 }
 
 function Execute-Operations {
     param($GUI_State)
     $JDPath = $GUI_State.InstallPath
-    if ($GUI_State.Mode -eq "Modify" -and [string]::IsNullOrWhiteSpace($JDPath)) {
-        Log-Status "Select an existing JDownloader folder before running modify mode." "ERROR"
-        return $false
+    if ($GUI_State.Mode -eq "Modify") {
+        if ([string]::IsNullOrWhiteSpace($JDPath)) {
+            Log-Status "Select an existing JDownloader folder before running modify mode." "ERROR"
+            return $false
+        }
+        # Refuse to act on a path that doesn't actually look like a JDownloader install.
+        # Without this, a typo could cause us to drop cfg/ into an arbitrary folder.
+        if (-not (Test-Path (Join-Path $JDPath 'JDownloader2.exe'))) {
+            Log-Status "Modify mode refused: '$JDPath' does not contain JDownloader2.exe." "ERROR"
+            return $false
+        }
     }
-    
+
+    # Pre-flight: validate the download-folder selection so we fail before touching any config.
+    if (-not [string]::IsNullOrWhiteSpace($GUI_State.DlFolder)) {
+        $dl = [string]$GUI_State.DlFolder
+        $dlParent = Split-Path $dl -Parent
+        if (-not (Test-Path $dl) -and (-not [string]::IsNullOrWhiteSpace($dlParent)) -and (-not (Test-Path $dlParent))) {
+            Log-Status "Download folder parent does not exist: $dlParent" "ERROR"
+            return $false
+        }
+    }
+
     # Catch-all error trap
     try {
         if ($GUI_State.Mode -ne "Modify") {
@@ -1187,7 +1815,7 @@ function Execute-Operations {
                 $guiObj = $Template_GUI | ConvertFrom-Json
                 $guiObj.lookandfeeltheme = $Theme.LafID
                 if ($GUI_State.Contains("ClipboardMonitor")) { $guiObj.clipboardmonitored = [bool]$GUI_State.ClipboardMonitor }
-                $guiObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GraphicalUserInterfaceSettings.json" -Encoding UTF8
+                [void](Write-JsonAtomic -Path (Join-Path $cfgPath 'org.jdownloader.settings.GraphicalUserInterfaceSettings.json') -Payload $guiObj)
             } catch { Log-Status "Failed to write GUI settings: $_" "WARN" }
         }
 
@@ -1210,7 +1838,7 @@ function Execute-Operations {
             }
             if ($GUI_State.Contains("HashCheck")) { $genObj.hashcheckenabled = [bool]$GUI_State.HashCheck }
             if ($GUI_State.Contains("PreserveFileDate")) { $genObj.useoriginallastmodified = [bool]$GUI_State.PreserveFileDate }
-            $genObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.settings.GeneralSettings.json" -Encoding UTF8
+            [void](Write-JsonAtomic -Path (Join-Path $cfgPath 'org.jdownloader.settings.GeneralSettings.json') -Payload $genObj)
         } catch { Log-Status "Failed to write general settings: $_" "WARN" }
 
         try {
@@ -1218,13 +1846,13 @@ function Execute-Operations {
             $trayObj.startminimizedenabled = $GUI_State.StartMin
             $trayObj.onminimizeaction = if ($GUI_State.MinToTray) { "TO_TASKBAR_IF_ALLOWED" } else { "TO_TASKBAR" }
             if ($GUI_State.Contains("CloseToTray")) { $trayObj.oncloseaction = if ($GUI_State.CloseToTray) { "TO_TASKBAR" } else { "ASK" } }
-            $trayObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.gui.jdtrayicon.TrayExtension.json" -Encoding UTF8
+            [void](Write-JsonAtomic -Path (Join-Path $cfgPath 'org.jdownloader.gui.jdtrayicon.TrayExtension.json') -Payload $trayObj)
         } catch { Log-Status "Failed to write tray settings: $_" "WARN" }
 
         # Write update settings
         try {
             $updateObj = $Template_Update | ConvertFrom-Json
-            $updateObj | ConvertTo-Json -Depth 100 | Set-Content "$cfgPath\org.jdownloader.updatev2.UpdateSettings.json" -Encoding UTF8
+            [void](Write-JsonAtomic -Path (Join-Path $cfgPath 'org.jdownloader.updatev2.UpdateSettings.json') -Payload $updateObj)
         } catch { Log-Status "Failed to write update settings: $_" "WARN" }
 
         $hardenState = @{
@@ -1233,10 +1861,18 @@ function Execute-Operations {
             WriteVmOptions   = if ($GUI_State.Contains("WriteVmOptions")) { [bool]$GUI_State.WriteVmOptions } else { $false }
         }
         Task-DeepHardening -cfgPath $cfgPath -HardenState $hardenState
-        if ($GUI_State.ForceMinimal) { Set-JsonConfig -Path "$cfgPath\org.jdownloader.gui.jdgui.settings.MainTabLayout.json" -DataHash @{compactmodetabs=$true; hidemyjdtab=$true} }
+        if ($GUI_State.ForceMinimal) { Set-JsonConfig -Path (Join-Path $cfgPath 'org.jdownloader.gui.jdgui.settings.MainTabLayout.json') -DataHash @{compactmodetabs=$true; hidemyjdtab=$true} }
         Task-NukeBanners -InstallPath $JDPath
         if ($GUI_State.PatchExe) { Task-PatchExeIcon -InstallPath $JDPath }
-        
+
+        # Defensive cleanup: remove any lingering *.tmp siblings we (or a previous crashed run) may
+        # have left in cfg/. Write-JsonAtomic removes its own tmp on success, but a crash between
+        # write and move-item could leave one behind.
+        try {
+            Get-ChildItem -Path $cfgPath -Filter '*.json.tmp' -File -Recurse -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+        } catch {}
+
         $ProgressBar.Style = "Continuous"; $ProgressBar.MarqueeAnimationSpeed = 0; $ProgressBar.Value = 100
         Log-Status "Operations completed." "SUCCESS"
         if ($GUI_State.AutoUpdate) { Trigger-Update -InstallPath $JDPath }
@@ -1438,7 +2074,7 @@ function New-NumericUpDown {
     return $n
 }
 
-$script:PageRegistry = @()
+$script:PageRegistry = New-Object System.Collections.Generic.List[object]
 
 function New-PagePanel {
     param([int]$CanvasHeight = 900)
@@ -1447,7 +2083,7 @@ function New-PagePanel {
     $p.AutoScroll = $true
     $canvas = New-Panel -Name "Canvas" -Parent $p -Location (New-Object System.Drawing.Point(24, 18)) -Size (New-Object System.Drawing.Size(1040, $CanvasHeight)) -Tag "Canvas"
     $p.AutoScrollMinSize = New-Object System.Drawing.Size(1064, [Math]::Max(0, $CanvasHeight + 36))
-    $script:PageRegistry += $p
+    [void]$script:PageRegistry.Add($p)
     return $p
 }
 
@@ -1497,11 +2133,16 @@ $FormW = [Math]::Min(1440, [Math]::Max(1320, [int]($screen.Width * 0.88)))
 $FormH = [Math]::Min(940, [Math]::Max(840, [int]($screen.Height * 0.88)))
 
 $Form = New-Object System.Windows.Forms.Form
-$brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
-if (Test-Path $brandingIconPath) {
-    try { $Form.Icon = New-Object System.Drawing.Icon($brandingIconPath) } catch {}
+$brandingIconPath = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'icon.ico' } else { $null }
+if ($brandingIconPath -and (Test-Path $brandingIconPath)) {
+    # Stream-based load so the .ico file handle is released immediately.
+    try {
+        $iconBytes = [System.IO.File]::ReadAllBytes($brandingIconPath)
+        $iconMs = New-Object System.IO.MemoryStream(,$iconBytes)
+        try { $Form.Icon = New-Object System.Drawing.Icon($iconMs) } finally { $iconMs.Dispose() }
+    } catch {}
 }
-$Form.Text = $Lang.Title
+$Form.Text = Get-LangValue -Key "Title" -Fallback $script:AppTitle
 $Form.Size = New-Object System.Drawing.Size($FormW, $FormH)
 $Form.MinimumSize = New-Object System.Drawing.Size(1320, 840)
 $Form.StartPosition = "CenterScreen"
@@ -1521,9 +2162,19 @@ $LogoBox = New-Object System.Windows.Forms.PictureBox
 $LogoBox.Location = New-Object System.Drawing.Point(24, 24)
 $LogoBox.Size = New-Object System.Drawing.Size(42, 42)
 $LogoBox.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
-$brandPngPath = Join-Path $PSScriptRoot "icon.png"
-if (Test-Path $brandPngPath) {
-    try { $LogoBox.Image = [System.Drawing.Image]::FromFile($brandPngPath) } catch {}
+$brandPngPath = if ($PSScriptRoot) { Join-Path $PSScriptRoot "icon.png" } else { $null }
+if ($brandPngPath -and (Test-Path $brandPngPath)) {
+    # Load via byte array + MemoryStream clone so the file handle is released immediately.
+    # FromFile() holds the handle open for the life of the Image, which blocks icon updates
+    # from any external tooling while the app is running.
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($brandPngPath)
+        $ms = New-Object System.IO.MemoryStream(,$bytes)
+        try {
+            $src = [System.Drawing.Image]::FromStream($ms)
+            try { $LogoBox.Image = New-Object System.Drawing.Bitmap($src) } finally { $src.Dispose() }
+        } finally { $ms.Dispose() }
+    } catch {}
 }
 [void]$SidebarBrand.Controls.Add($LogoBox)
 [void](New-Label -Parent $SidebarBrand -Text "Workspace manager" -Location (New-Object System.Drawing.Point(78, 26)) -Font (New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(118, 16)) -AutoSize $false -Tag "BodyMuted")
@@ -1633,7 +2284,14 @@ $DashPrefsIntro = New-Label -Parent $DashPrefs -Text "Set the app chrome once, t
 $LblGuiTheme = New-Label -Parent $DashPrefs -LangKey "GuiTheme" -Location (New-Object System.Drawing.Point(24, 96))
 $CboGuiTheme = New-ComboBox -Parent $DashPrefs -Location (New-Object System.Drawing.Point(24, 124)) -Size (New-Object System.Drawing.Size(290, 36)) -Tag "Input" -Items $GuiThemes.Keys
 $LblLang = New-Label -Parent $DashPrefs -LangKey "Language" -Location (New-Object System.Drawing.Point(348, 96))
-$CboLang = New-ComboBox -Parent $DashPrefs -Location (New-Object System.Drawing.Point(348, 124)) -Size (New-Object System.Drawing.Size(290, 36)) -Tag "Input" -Items $AvailableLanguages.Keys
+$CboLang = New-ComboBox -Parent $DashPrefs -Location (New-Object System.Drawing.Point(348, 124)) -Size (New-Object System.Drawing.Size(290, 36)) -Tag "Input" -Items ($AvailableLanguages.Keys | Sort-Object)
+$CboLang.FormattingEnabled = $true
+$CboLang.Add_Format({
+    param($src, $evt)
+    $code = [string]$evt.ListItem
+    if ([string]::IsNullOrWhiteSpace($code)) { return }
+    $evt.Value = Get-LanguageDisplayName $code
+})
 $DashPrefsNote = New-Surface -Parent $DashPrefs -Location (New-Object System.Drawing.Point(668, 80)) -Size (New-Object System.Drawing.Size(348, 144)) -Tag "Callout"
 $DashPrefsNoteHeading = New-Label -Parent $DashPrefsNote -Text "Workspace status" -Location (New-Object System.Drawing.Point(18, 16)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold))
 $DashPrefsStateValue = New-Label -Parent $DashPrefsNote -Text "No saved workspace yet" -Location (New-Object System.Drawing.Point(18, 40)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(310, 24)) -AutoSize $false
@@ -1724,18 +2382,23 @@ $InstallNotes = New-Surface -Parent $InstallationCanvas -Location (New-Object Sy
 [void](New-Label -Parent $InstallNotes -Text "If GitHub install fails, the app can fall back to the manual Mega flow." -Location (New-Object System.Drawing.Point(700, 60)) -Size (New-Object System.Drawing.Size(280, 36)) -AutoSize $false -Tag "BodyMuted")
 
 function Update-InterfaceText {
-    $Form.Text = $Lang.Title
+    $Form.Text = Get-LangValue -Key "Title" -Fallback $script:AppTitle
     foreach ($entry in $script:LanguageRegistry) {
-        if ($entry.Control -and -not $entry.Control.IsDisposed) {
-            $entry.Control.Text = $Lang[$entry.Key]
+        $ctrl = $entry.Control
+        if (-not $ctrl -or $ctrl.IsDisposed) { continue }
+        $originalFallback = $null
+        if ($DefaultLang.Contains($entry.Key)) { $originalFallback = [string]$DefaultLang[$entry.Key] }
+        $resolved = Get-LangValue -Key $entry.Key -Fallback $originalFallback
+        if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+            try { $ctrl.Text = $resolved } catch {}
         }
     }
-    Update-ModeSummary
-    Update-ThemePreview
-    Update-BehaviorProfile
-    Update-HardeningProfile
-    Layout-Footer
-    Update-WorkspaceState
+    try { Update-ModeSummary } catch {}
+    try { Update-ThemePreview } catch {}
+    try { Update-BehaviorProfile } catch {}
+    try { Update-HardeningProfile } catch {}
+    try { Layout-Footer } catch {}
+    try { Update-WorkspaceState } catch {}
 }
 
 function Layout-Footer {
@@ -1790,6 +2453,42 @@ function Focus-InstallPath {
     }
 }
 
+function Test-StateHas {
+    param($State, [string]$Name)
+    if (-not $State) { return $false }
+    try { return ($State.PSObject.Properties.Name -contains $Name) } catch { return $false }
+}
+
+function ConvertTo-SafeBool {
+    # PowerShell's [bool] cast treats any non-empty string as $true, so a hand-edited
+    # settings.json containing "false" or "0" (strings, not literals) would silently enable
+    # the flag. Inspect the raw value with parse semantics that match how users think.
+    param($Value, [bool]$Default = $false)
+    if ($null -eq $Value) { return $Default }
+    if ($Value -is [bool]) { return $Value }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+        return ($Value -ne 0)
+    }
+    $s = ([string]$Value).Trim()
+    if ([string]::IsNullOrEmpty($s)) { return $Default }
+    switch -Regex ($s) {
+        '^(?i)(true|yes|on|1|enabled)$'    { return $true }
+        '^(?i)(false|no|off|0|disabled)$'  { return $false }
+    }
+    return $Default
+}
+
+function Set-NumericSafe {
+    param($Control, $Value)
+    if (-not $Control) { return }
+    try {
+        $d = [decimal]$Value
+        if ($d -lt $Control.Minimum) { $d = $Control.Minimum }
+        if ($d -gt $Control.Maximum) { $d = $Control.Maximum }
+        $Control.Value = $d
+    } catch {}
+}
+
 function Apply-StateToControls {
     param($State)
     if (-not $State) { return }
@@ -1797,31 +2496,37 @@ function Apply-StateToControls {
     $previousBootstrapping = $script:IsBootstrapping
     $script:IsBootstrapping = $true
     try {
-        if ($State.PSObject.Properties.Name -contains "InstallPath") { $TxtPath.Text = [string]$State.InstallPath }
-        if ($State.PSObject.Properties.Name -contains "ThemeName") { $CboTheme.Text = [string]$State.ThemeName }
-        if ($State.PSObject.Properties.Name -contains "GuiThemeName" -and $CboGuiTheme.Items.Contains($State.GuiThemeName)) { $CboGuiTheme.Text = [string]$State.GuiThemeName }
-        if ($State.PSObject.Properties.Name -contains "LanguageCode" -and $CboLang.Items.Contains($State.LanguageCode)) { $CboLang.SelectedItem = [string]$State.LanguageCode }
-        if ($State.PSObject.Properties.Name -contains "IconPack") { $CboIcons.Text = [string]$State.IconPack }
-        if ($State.PSObject.Properties.Name -contains "WindowDec") { $ChkWinDec.Checked = [bool]$State.WindowDec }
-        if ($State.PSObject.Properties.Name -contains "ForceMinimal") { $ChkMinLay.Checked = [bool]$State.ForceMinimal }
-        if ($State.PSObject.Properties.Name -contains "MaxSim") { $NumSim.Value = [decimal]$State.MaxSim }
-        if ($State.PSObject.Properties.Name -contains "PauseSpeed") { $NumPause.Value = [decimal]$State.PauseSpeed }
-        if ($State.PSObject.Properties.Name -contains "DlFolder") { $TxtDl.Text = [string]$State.DlFolder }
-        if ($State.PSObject.Properties.Name -contains "StartMin") { $ChkMin.Checked = [bool]$State.StartMin }
-        if ($State.PSObject.Properties.Name -contains "MinToTray") { $ChkTray.Checked = [bool]$State.MinToTray }
-        if ($State.PSObject.Properties.Name -contains "CloseToTray") { $ChkCloseTray.Checked = [bool]$State.CloseToTray }
-        if ($State.PSObject.Properties.Name -contains "PatchExe") { $ChkExe.Checked = [bool]$State.PatchExe }
-        if ($State.PSObject.Properties.Name -contains "AutoUpdate") { $ChkUpdate.Checked = [bool]$State.AutoUpdate }
-        if ($State.PSObject.Properties.Name -contains "MaxChunks") { $NumChunks.Value = [decimal]$State.MaxChunks }
-        if ($State.PSObject.Properties.Name -contains "MaxPerHost") { $NumPerHost.Value = [decimal]$State.MaxPerHost }
-        if ($State.PSObject.Properties.Name -contains "HashCheck") { $ChkHashCheck.Checked = [bool]$State.HashCheck }
-        if ($State.PSObject.Properties.Name -contains "PreserveFileDate") { $ChkPreserveDate.Checked = [bool]$State.PreserveFileDate }
-        if ($State.PSObject.Properties.Name -contains "ClipboardMonitor") { $ChkClipboard.Checked = [bool]$State.ClipboardMonitor }
-        if ($State.PSObject.Properties.Name -contains "DisableLocalAPI") { $ChkDisableAPI.Checked = [bool]$State.DisableLocalAPI }
-        if ($State.PSObject.Properties.Name -contains "WriteVmOptions") { $ChkVmOptions.Checked = [bool]$State.WriteVmOptions }
-        if ($State.PSObject.Properties.Name -contains "Mode") {
+        if (Test-StateHas $State "InstallPath") { $TxtPath.Text = [string]$State.InstallPath }
+        if (Test-StateHas $State "ThemeName")   {
+            $val = [string]$State.ThemeName
+            if ($CboTheme.Items.Contains($val)) { $CboTheme.SelectedItem = $val } else { $CboTheme.Text = $val }
+        }
+        if ((Test-StateHas $State "GuiThemeName") -and $CboGuiTheme.Items.Contains($State.GuiThemeName)) { $CboGuiTheme.SelectedItem = [string]$State.GuiThemeName }
+        if ((Test-StateHas $State "LanguageCode") -and $CboLang.Items.Contains($State.LanguageCode)) { $CboLang.SelectedItem = [string]$State.LanguageCode }
+        if (Test-StateHas $State "IconPack") {
+            $val = [string]$State.IconPack
+            if ($CboIcons.Items.Contains($val)) { $CboIcons.SelectedItem = $val } else { $CboIcons.Text = $val }
+        }
+        if (Test-StateHas $State "WindowDec")    { $ChkWinDec.Checked     = ConvertTo-SafeBool $State.WindowDec     $true }
+        if (Test-StateHas $State "ForceMinimal") { $ChkMinLay.Checked     = ConvertTo-SafeBool $State.ForceMinimal  $false }
+        if (Test-StateHas $State "MaxSim")       { Set-NumericSafe -Control $NumSim    -Value $State.MaxSim }
+        if (Test-StateHas $State "PauseSpeed")   { Set-NumericSafe -Control $NumPause  -Value $State.PauseSpeed }
+        if (Test-StateHas $State "DlFolder")     { $TxtDl.Text = [string]$State.DlFolder }
+        if (Test-StateHas $State "StartMin")     { $ChkMin.Checked        = ConvertTo-SafeBool $State.StartMin      $false }
+        if (Test-StateHas $State "MinToTray")    { $ChkTray.Checked       = ConvertTo-SafeBool $State.MinToTray     $true }
+        if (Test-StateHas $State "CloseToTray")  { $ChkCloseTray.Checked  = ConvertTo-SafeBool $State.CloseToTray   $true }
+        if (Test-StateHas $State "PatchExe")     { $ChkExe.Checked        = ConvertTo-SafeBool $State.PatchExe      $true }
+        if (Test-StateHas $State "AutoUpdate")   { $ChkUpdate.Checked     = ConvertTo-SafeBool $State.AutoUpdate    $true }
+        if (Test-StateHas $State "MaxChunks")    { Set-NumericSafe -Control $NumChunks  -Value $State.MaxChunks }
+        if (Test-StateHas $State "MaxPerHost")   { Set-NumericSafe -Control $NumPerHost -Value $State.MaxPerHost }
+        if (Test-StateHas $State "HashCheck")       { $ChkHashCheck.Checked    = ConvertTo-SafeBool $State.HashCheck        $true }
+        if (Test-StateHas $State "PreserveFileDate"){ $ChkPreserveDate.Checked = ConvertTo-SafeBool $State.PreserveFileDate $false }
+        if (Test-StateHas $State "ClipboardMonitor"){ $ChkClipboard.Checked    = ConvertTo-SafeBool $State.ClipboardMonitor $true }
+        if (Test-StateHas $State "DisableLocalAPI") { $ChkDisableAPI.Checked   = ConvertTo-SafeBool $State.DisableLocalAPI  $true }
+        if (Test-StateHas $State "WriteVmOptions")  { $ChkVmOptions.Checked    = ConvertTo-SafeBool $State.WriteVmOptions   $false }
+        if (Test-StateHas $State "Mode") {
             if ($State.Mode -eq "Modify") { $CboMode.SelectedIndex = 0 }
-            elseif ($State.PSObject.Properties.Name -contains "InstallSource" -and $State.InstallSource -eq "Mega") { $CboMode.SelectedIndex = 2 }
+            elseif ((Test-StateHas $State "InstallSource") -and $State.InstallSource -eq "Mega") { $CboMode.SelectedIndex = 2 }
             else { $CboMode.SelectedIndex = 1 }
         }
     } finally {
@@ -1891,6 +2596,14 @@ function Get-NormalizedStateObject {
     $languageCode = [string]$State.LanguageCode
     if ([string]::IsNullOrWhiteSpace($languageCode)) { $languageCode = $CurrentLangCode }
 
+    # Parse numerics safely - a hand-edited JSON with "MaxSim": "three" should not throw here.
+    $toInt = {
+        param($v, [int]$default = 0)
+        if ($null -eq $v) { return $default }
+        $parsed = 0
+        if ([int]::TryParse(([string]$v).Trim(), [ref]$parsed)) { return $parsed } else { return $default }
+    }
+
     return [ordered]@{
         Mode            = $mode
         InstallSource   = $installSource
@@ -1899,23 +2612,23 @@ function Get-NormalizedStateObject {
         GuiThemeName    = [string]$State.GuiThemeName
         LanguageCode    = $languageCode
         IconPack        = [string]$State.IconPack
-        WindowDec       = [bool]$State.WindowDec
-        MaxSim          = [int]$State.MaxSim
+        WindowDec       = ConvertTo-SafeBool $State.WindowDec    $true
+        MaxSim          = & $toInt $State.MaxSim 3
         DlFolder        = ([string]$State.DlFolder).Trim()
-        StartMin        = [bool]$State.StartMin
-        MinToTray       = [bool]$State.MinToTray
-        CloseToTray     = [bool]$State.CloseToTray
-        PatchExe        = [bool]$State.PatchExe
-        AutoUpdate      = [bool]$State.AutoUpdate
-        ForceMinimal    = [bool]$State.ForceMinimal
-        PauseSpeed      = [int]$State.PauseSpeed
-        MaxChunks       = if ($State.PSObject.Properties.Name -contains "MaxChunks") { [int]$State.MaxChunks } else { 1 }
-        MaxPerHost      = if ($State.PSObject.Properties.Name -contains "MaxPerHost") { [int]$State.MaxPerHost } else { 1 }
-        HashCheck       = if ($State.PSObject.Properties.Name -contains "HashCheck") { [bool]$State.HashCheck } else { $true }
-        PreserveFileDate= if ($State.PSObject.Properties.Name -contains "PreserveFileDate") { [bool]$State.PreserveFileDate } else { $false }
-        ClipboardMonitor= if ($State.PSObject.Properties.Name -contains "ClipboardMonitor") { [bool]$State.ClipboardMonitor } else { $true }
-        DisableLocalAPI = if ($State.PSObject.Properties.Name -contains "DisableLocalAPI") { [bool]$State.DisableLocalAPI } else { $true }
-        WriteVmOptions  = if ($State.PSObject.Properties.Name -contains "WriteVmOptions") { [bool]$State.WriteVmOptions } else { $false }
+        StartMin        = ConvertTo-SafeBool $State.StartMin     $false
+        MinToTray       = ConvertTo-SafeBool $State.MinToTray    $true
+        CloseToTray     = ConvertTo-SafeBool $State.CloseToTray  $true
+        PatchExe        = ConvertTo-SafeBool $State.PatchExe     $true
+        AutoUpdate      = ConvertTo-SafeBool $State.AutoUpdate   $true
+        ForceMinimal    = ConvertTo-SafeBool $State.ForceMinimal $false
+        PauseSpeed      = & $toInt $State.PauseSpeed 10240
+        MaxChunks       = if (Test-StateHas $State "MaxChunks")       { & $toInt $State.MaxChunks 1 }       else { 1 }
+        MaxPerHost      = if (Test-StateHas $State "MaxPerHost")      { & $toInt $State.MaxPerHost 1 }      else { 1 }
+        HashCheck       = if (Test-StateHas $State "HashCheck")        { ConvertTo-SafeBool $State.HashCheck        $true }  else { $true }
+        PreserveFileDate= if (Test-StateHas $State "PreserveFileDate") { ConvertTo-SafeBool $State.PreserveFileDate $false } else { $false }
+        ClipboardMonitor= if (Test-StateHas $State "ClipboardMonitor") { ConvertTo-SafeBool $State.ClipboardMonitor $true }  else { $true }
+        DisableLocalAPI = if (Test-StateHas $State "DisableLocalAPI")  { ConvertTo-SafeBool $State.DisableLocalAPI  $true }  else { $true }
+        WriteVmOptions  = if (Test-StateHas $State "WriteVmOptions")   { ConvertTo-SafeBool $State.WriteVmOptions   $false } else { $false }
     }
 }
 
@@ -1977,7 +2690,7 @@ function Update-WorkspaceState {
 
     if (-not $script:SavedWorkspaceState) {
         $BtnRestoreWorkspace.Enabled = $false
-        $BtnRestoreWorkspace.Text = "Available later"
+        $BtnRestoreWorkspace.Text = "Available after first run"
         $changedAreas = @(Get-ChangedWorkspaceAreas -SavedState $baselineState -CurrentState $currentState)
         if ($changedAreas.Count -eq 0) {
             $FooterSummary.Text = "First run ready. Review the pages, then apply once to save this workspace."
@@ -2390,12 +3103,63 @@ function Ensure-InstallPathSelected {
     return $true
 }
 
-$RepairResetCfg = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 184)) -Title "Factory reset" -Description "Back up and remove the full cfg folder to return JDownloader to a clean starting point." -ButtonText "Reset configuration" -ButtonTag "DangerButton" -BadgeText "Destructive" -BadgeState "Danger" -Action { if ((Ensure-InstallPathSelected) -and (Show-ActionPrompt -Title "Reset configuration" -Message "This closes JDownloader, backs up the current configuration, and removes the cfg folder. Downloads remain on disk." -ConfirmText "Reset configuration" -ConfirmTag "DangerButton")) { Kill-JDownloader; Backup-JD -InstallPath $TxtPath.Text; Remove-Item "$($TxtPath.Text)\cfg" -Recurse -Force -ErrorAction SilentlyContinue; Log-Status "Configuration reset completed." "SUCCESS" } }
-$RepairResetTheme = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(354, 184)) -Title "Theme reset" -Description "Strip theme overrides and custom icons without touching the rest of the installation." -ButtonText "Reset theme only" -ButtonTag "SecondaryButton" -BadgeText "Reversible" -BadgeState "Accent" -Action { if ((Ensure-InstallPathSelected) -and (Show-ActionPrompt -Title "Reset theme assets" -Message "This removes the custom look-and-feel files and current icon overrides so you can start fresh." -ConfirmText "Reset theme assets" -ConfirmTag "PrimaryButton")) { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\cfg\laf" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item "$($TxtPath.Text)\themes\standard\org\jdownloader\images\*" -Recurse -Force -ErrorAction SilentlyContinue; Log-Status "Theme and icon overrides were cleared." "SUCCESS" } }
-$RepairClearCache = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(708, 184)) -Title "Cache cleanup" -Description "Delete temporary files, logs, and cache fragments that commonly linger after broken runs." -ButtonText "Clear cache" -ButtonTag "SecondaryButton" -BadgeText "Safe" -BadgeState "Success" -Action { if (Ensure-InstallPathSelected) { Kill-JDownloader; Remove-Item "$($TxtPath.Text)\tmp\*" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item "$($TxtPath.Text)\cfg\*.cache" -Force -ErrorAction SilentlyContinue; Log-Status "Temporary cache files were cleared." "SUCCESS" } }
+$RepairResetCfg = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 184)) -Title "Factory reset" -Description "Back up and remove the full cfg folder to return JDownloader to a clean starting point." -ButtonText "Reset configuration" -ButtonTag "DangerButton" -BadgeText "Destructive" -BadgeState "Danger" -Action {
+    if (-not (Ensure-InstallPathSelected)) { return }
+    if (-not (Show-ActionPrompt -Title "Reset configuration" -Message "This closes JDownloader, backs up the current configuration, and removes the cfg folder. Downloads remain on disk." -ConfirmText "Reset configuration" -ConfirmTag "DangerButton")) { return }
+    Kill-JDownloader
+    Backup-JD -InstallPath $TxtPath.Text
+    $cfg = Join-Path $TxtPath.Text 'cfg'
+    if (Test-Path $cfg) { try { Remove-Item $cfg -Recurse -Force -ErrorAction Stop } catch { Log-Status "Reset failed: $_" "ERROR"; return } }
+    Log-Status "Configuration reset completed." "SUCCESS"
+}
+$RepairResetTheme = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(354, 184)) -Title "Theme reset" -Description "Strip theme overrides and custom icons without touching the rest of the installation." -ButtonText "Reset theme only" -ButtonTag "SecondaryButton" -BadgeText "Reversible" -BadgeState "Accent" -Action {
+    if (-not (Ensure-InstallPathSelected)) { return }
+    if (-not (Show-ActionPrompt -Title "Reset theme assets" -Message "This removes the custom look-and-feel files and current icon overrides so you can start fresh." -ConfirmText "Reset theme assets" -ConfirmTag "PrimaryButton")) { return }
+    Kill-JDownloader
+    $laf    = Join-Path $TxtPath.Text 'cfg\laf'
+    $icons  = Join-Path $TxtPath.Text 'themes\standard\org\jdownloader\images'
+    if (Test-Path $laf)   { try { Remove-Item $laf -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
+    if (Test-Path $icons) { try { Remove-Item (Join-Path $icons '*') -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
+    Log-Status "Theme and icon overrides were cleared." "SUCCESS"
+}
+$RepairClearCache = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(708, 184)) -Title "Cache cleanup" -Description "Delete temporary files, logs, and cache fragments that commonly linger after broken runs." -ButtonText "Clear cache" -ButtonTag "SecondaryButton" -BadgeText "Safe" -BadgeState "Success" -Action {
+    if (-not (Ensure-InstallPathSelected)) { return }
+    Kill-JDownloader
+    $root = $TxtPath.Text.Trim()
+    $removed = 0
+    $targets = @(
+        (Join-Path $root 'tmp\*')
+        (Join-Path $root 'logs\*')
+        (Join-Path $root 'cfg\*.cache')
+        (Join-Path $root 'cfg\tmp\*')
+        (Join-Path $root 'update\*.tmp')
+    )
+    foreach ($glob in $targets) {
+        try {
+            $items = Get-ChildItem -Path $glob -Recurse -Force -ErrorAction SilentlyContinue
+            if ($items) {
+                $items | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                $removed += $items.Count
+            }
+        } catch {}
+    }
+    Log-Status ("Cache cleanup removed {0} item(s)." -f $removed) "SUCCESS"
+}
 $RepairAudit = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 372)) -Title "Health audit" -Description "Check for missing or corrupted configuration files before you commit to a larger repair step." -ButtonText "Run health audit" -ButtonTag "SuccessButton" -BadgeText "Read-only" -BadgeState "Accent" -Action { if (Ensure-InstallPathSelected) { Run-Audit -InstallPath $TxtPath.Text } }
-$RepairSafe = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(354, 372)) -Title "Safe mode launch" -Description "Start JDownloader with a reduced profile for troubleshooting unstable themes or config changes." -ButtonText "Launch safe mode" -ButtonTag "SuccessButton" -BadgeText "Safe" -BadgeState "Success" -Action { if (Ensure-InstallPathSelected -RequireExecutable) { Start-Process "$($TxtPath.Text)\JDownloader2.exe" -ArgumentList "-safe"; Log-Status "JDownloader launched in safe mode." "SUCCESS" } }
-$RepairUninstall = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(708, 372)) -Title "Full uninstall" -Description "Remove the application entirely when you need to start over from a clean machine state." -ButtonText "Full uninstall" -ButtonTag "DangerButton" -BadgeText "Destructive" -BadgeState "Danger" -Action { if ((Ensure-InstallPathSelected) -and (Show-ActionPrompt -Title "Full uninstall" -Message "This removes JDownloader from the selected folder. Use it only when you want to wipe the install completely." -ConfirmText "Uninstall JDownloader" -ConfirmTag "DangerButton")) { Task-FullUninstall -InstallPath $TxtPath.Text; Log-Status "Full uninstall finished." "SUCCESS" } }
+$RepairSafe = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(354, 372)) -Title "Safe mode launch" -Description "Start JDownloader with a reduced profile for troubleshooting unstable themes or config changes." -ButtonText "Launch safe mode" -ButtonTag "SuccessButton" -BadgeText "Safe" -BadgeState "Success" -Action {
+    if (-not (Ensure-InstallPathSelected -RequireExecutable)) { return }
+    $exe = Join-Path $TxtPath.Text 'JDownloader2.exe'
+    try {
+        Start-Process -FilePath $exe -ArgumentList '-safe' -ErrorAction Stop
+        Log-Status "JDownloader launched in safe mode." "SUCCESS"
+    } catch { Log-Status "Failed to launch safe mode: $_" "ERROR" }
+}
+$RepairUninstall = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(708, 372)) -Title "Full uninstall" -Description "Remove the application entirely when you need to start over from a clean machine state." -ButtonText "Full uninstall" -ButtonTag "DangerButton" -BadgeText "Destructive" -BadgeState "Danger" -Action {
+    if (-not (Ensure-InstallPathSelected)) { return }
+    if (-not (Show-ActionPrompt -Title "Full uninstall" -Message "This removes JDownloader from the selected folder. Use it only when you want to wipe the install completely." -ConfirmText "Uninstall JDownloader" -ConfirmTag "DangerButton")) { return }
+    Task-FullUninstall -InstallPath $TxtPath.Text
+    Log-Status "Full uninstall finished." "SUCCESS"
+}
 
 function Update-ModeSummary {
     switch ($CboMode.SelectedIndex) {
@@ -2687,68 +3451,130 @@ function Update-NavigationState {
 
 function Show-Page {
     param($Button)
-    foreach ($page in $pages.Values) { $page.Visible = $false }
-    $pages[$Button].Visible = $true
-    Center-PageCanvas $pages[$Button]
+    if (-not $Button -or -not $pages.ContainsKey($Button)) { return }
+    $target = $pages[$Button]
+    if (-not $target -or $target.IsDisposed) { return }
+
+    foreach ($page in $pages.Values) {
+        if ($page -and -not $page.IsDisposed) { $page.Visible = $false }
+    }
+    $target.Visible = $true
+    Center-PageCanvas $target
     $script:ActiveNavButton = $Button
     Update-NavigationState
-    if ($pages[$Button] -eq $PageTheme) {
+    if ($target -eq $PageTheme) {
         Resize-ThemePreview
         Update-ThemePreview
     }
 }
 
 function Start-WorkspaceApply {
-    $State = Get-CurrentGuiState
-    if ($State.Mode -eq "Modify" -and [string]::IsNullOrWhiteSpace($State.InstallPath)) {
-        Focus-InstallPath
-        Log-Status "Modify mode needs an existing JDownloader folder." "WARN"
+    # Re-entrancy guard: prevent double-invocation from rapid double-click on Apply before
+    # Set-WorkspaceBusyState has had a chance to disable the button.
+    if ($script:ApplyInFlight) {
+        Log-Status "Apply already in progress." "DEBUG"
         return $false
     }
+    $script:ApplyInFlight = $true
+    if ($BtnExec) { $BtnExec.Enabled = $false }
 
-    if (-not $script:IsElevated) {
-        if (Request-ElevatedApply -State $State) {
-            Log-Status "Administrative approval requested. The elevated workspace will continue this run." "INFO"
-            if ($Form) { $Form.Close() }
+    try {
+        $State = Get-CurrentGuiState
+        if ($State.Mode -eq "Modify" -and [string]::IsNullOrWhiteSpace($State.InstallPath)) {
+            Focus-InstallPath
+            Log-Status "Modify mode needs an existing JDownloader folder." "WARN"
+            return $false
+        }
+
+        if (-not $script:IsElevated) {
+            if (Request-ElevatedApply -State $State) {
+                Log-Status "Administrative approval requested. The elevated workspace will continue this run." "INFO"
+                if ($Form) { $Form.Close() }
+                return $true
+            }
+            return $false
+        }
+
+        if (-not (Show-ConfirmationDialog -CurrentState $State)) {
+            Log-Status "Apply was canceled before changes were written." "INFO"
+            return $false
+        }
+
+        Set-WorkspaceBusyState -IsBusy $true
+        $ProgressBar.Value = 15
+        Log-Status "Applying selected changes..." "INFO"
+        try { $Form.Refresh() } catch {}
+        $completed = $false
+        try {
+            $completed = Execute-Operations -GUI_State $State
+        } finally {
+            Set-WorkspaceBusyState -IsBusy $false
+        }
+
+        if ($completed) {
+            $script:SavedWorkspaceState = Get-NormalizedStateObject -State $State
+            $script:InitialWorkspaceState = $script:SavedWorkspaceState
+            Update-WorkspaceState
+            Log-Status (Get-LangValue -Key "RunFinishedBody" -Fallback "Selected operations completed. Review the status area for the final result.") "SUCCESS"
             return $true
         }
-        return $false
-    }
 
-    if (-not (Show-ConfirmationDialog -CurrentState $State)) {
-        Log-Status "Apply was canceled before changes were written." "INFO"
+        $ProgressBar.Style = "Continuous"
+        $ProgressBar.MarqueeAnimationSpeed = 0
+        $ProgressBar.Value = 0
         return $false
-    }
-
-    Set-WorkspaceBusyState -IsBusy $true
-    $ProgressBar.Value = 15
-    Log-Status "Applying selected changes..." "INFO"
-    $Form.Refresh()
-    $completed = $false
-    try {
-        $completed = Execute-Operations -GUI_State $State
     } finally {
-        Set-WorkspaceBusyState -IsBusy $false
+        $script:ApplyInFlight = $false
+        if ($BtnExec -and -not $Form.UseWaitCursor) { $BtnExec.Enabled = $true }
     }
-    if ($completed) {
-        $script:SavedWorkspaceState = Get-NormalizedStateObject -State $State
-        $script:InitialWorkspaceState = $script:SavedWorkspaceState
-        Update-WorkspaceState
-        Log-Status (Get-LangValue -Key "RunFinishedBody" -Fallback "Selected operations completed. Review the status area for the final result.") "SUCCESS"
-        return $true
-    }
-
-    $ProgressBar.Style = "Continuous"
-    $ProgressBar.MarqueeAnimationSpeed = 0
-    $ProgressBar.Value = 0
-    return $false
 }
 
-$BtnBrowse.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtPath.Text = $fbd.SelectedPath } })
-$BtnDetect.Add_Click({ $p = Detect-JDPath; if ($p) { $TxtPath.Text = $p; Log-Status "Detected JDownloader at $p." "SUCCESS" } else { Log-Status "JDownloader was not detected automatically on this machine." "WARN" } })
-$BtnDl.Add_Click({ $fbd = New-Object System.Windows.Forms.FolderBrowserDialog; if ($fbd.ShowDialog() -eq "OK") { $TxtDl.Text = $fbd.SelectedPath } })
-$BtnOpenThm.Add_Click({ $path = "$($TxtPath.Text)\themes\standard\org\jdownloader\images"; if (Test-Path $path) { Invoke-Item $path } else { [System.Windows.Forms.MessageBox]::Show("No icon folder was found yet. Apply a theme first or point the app at an existing install.", "Folder not found", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null } })
-$LblThemeLink.Add_LinkClicked({ if ($LblThemeLink.Tag) { Start-Process $LblThemeLink.Tag | Out-Null } })
+function Show-FolderPicker {
+    param([string]$Description, [string]$SelectedPath)
+    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+    try {
+        if ($Description) { $fbd.Description = $Description }
+        if (-not [string]::IsNullOrWhiteSpace($SelectedPath) -and (Test-Path $SelectedPath)) { $fbd.SelectedPath = $SelectedPath }
+        if ($fbd.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK) { return $fbd.SelectedPath }
+    } finally { $fbd.Dispose() }
+    return $null
+}
+
+$BtnBrowse.Add_Click({
+    $picked = Show-FolderPicker -Description "Select the JDownloader installation folder" -SelectedPath $TxtPath.Text
+    if ($picked) { $TxtPath.Text = $picked }
+})
+$BtnDetect.Add_Click({
+    $p = Detect-JDPath
+    if ($p) { $TxtPath.Text = $p; Log-Status "Detected JDownloader at $p." "SUCCESS" }
+    else    { Log-Status "JDownloader was not detected automatically on this machine." "WARN" }
+})
+$BtnDl.Add_Click({
+    $picked = Show-FolderPicker -Description "Select the default download folder" -SelectedPath $TxtDl.Text
+    if ($picked) { $TxtDl.Text = $picked }
+})
+$BtnOpenThm.Add_Click({
+    if ([string]::IsNullOrWhiteSpace($TxtPath.Text)) {
+        [System.Windows.Forms.MessageBox]::Show("Set the JDownloader install folder first.", "Folder not found", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        return
+    }
+    $path = Join-Path $TxtPath.Text 'themes\standard\org\jdownloader\images'
+    if (Test-Path $path) {
+        try { Invoke-Item $path } catch { Log-Status "Could not open $path : $_" "WARN" }
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("No icon folder was found yet. Apply a theme first or point the app at an existing install.", "Folder not found", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    }
+})
+$LblThemeLink.Add_LinkClicked({
+    $target = [string]$LblThemeLink.Tag
+    if ([string]::IsNullOrWhiteSpace($target)) { return }
+    # Only permit known URL schemes so a malformed Tag can't launch an arbitrary local file.
+    if ($target -match '^https?://') {
+        try { Start-Process $target | Out-Null } catch { Log-Status "Could not open link: $_" "WARN" }
+    } else {
+        Log-Status "Refused to open unsafe link target." "WARN"
+    }
+})
 $CboGuiTheme.Add_SelectedIndexChanged({ Apply-GuiTheme -ThemeName $CboGuiTheme.Text; Update-WorkspaceState })
 $CboLang.Add_SelectedIndexChanged({ Apply-LanguageData $CboLang.Text; Update-InterfaceText; Update-WorkspaceState })
 $CboTheme.Add_SelectedIndexChanged({ Update-ThemePreview; Update-WorkspaceState })
@@ -2870,7 +3696,25 @@ $Form.Add_Load({
     Start-ThemeImagePreload -Definitions $ThemeDefinitions
 })
 
-$Form.Add_Resize({ Sync-PageCanvases; Resize-ThemePreview; Layout-Footer })
+# Debounce the resize handler: Form fires Resize per drag-pixel, which was causing the full
+# page-canvas + theme preview + footer layout to run 100+ times during a single drag. A 60ms
+# throttle batches the bursts and runs the heavy layout once the user pauses.
+$script:ResizeDebounceTimer = New-Object System.Windows.Forms.Timer
+$script:ResizeDebounceTimer.Interval = 60
+$script:ResizeDebounceTimer.Add_Tick({
+    param($src, $evt)
+    try { $src.Stop() } catch {}
+    try { Sync-PageCanvases } catch {}
+    try { Resize-ThemePreview } catch {}
+    try { Layout-Footer } catch {}
+})
+[void]$GlobalTimers.Add($script:ResizeDebounceTimer)
+$Form.Add_Resize({
+    if ($script:ResizeDebounceTimer) {
+        $script:ResizeDebounceTimer.Stop()
+        $script:ResizeDebounceTimer.Start()
+    }
+})
 $Form.Add_Shown({
     if ($script:ResumeApplyRequested) {
         $script:ResumeApplyRequested = $false
@@ -2879,12 +3723,12 @@ $Form.Add_Shown({
     }
 })
 $Form.Add_FormClosing({
-    param($sender, $e)
+    param($src, $evt)
     if ($Form.UseWaitCursor) {
-        $e.Cancel = $true
+        $evt.Cancel = $true
         return
     }
-    if ($LogoBox.Image) { $LogoBox.Image.Dispose() }
+    if ($LogoBox -and $LogoBox.Image) { try { $LogoBox.Image.Dispose() } catch {} }
     Cleanup-Resources
 })
 
