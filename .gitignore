@@ -1,5 +1,13 @@
 *.bak
 *.log
 *.tmp
+*.bad-*
 .vs/
+.vscode/
 CLAUDE.md
+
+# Local runtime artifacts (per-user)
+settings.json
+settings.migrated.json
+resume-state-*.json
+Logs/

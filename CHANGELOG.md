@@ -2,6 +2,84 @@
 
 All notable changes to JDownloader-2-Ultimate-Manager will be documented in this file.
 
+## [v13.7.0] - 2026-04-16
+
+### Fixed (round 6 - bundled assets + repo hygiene)
+- **Bundled installer is now actually used.** The repo ships 70 MB of `Installer/installer.7z.*` parts that the script was never touching - `Task-Install` always downloaded from a separate GitHub repo. Now checks `$PSScriptRoot\Installer\` first, stages the bundled parts into `$WorkDir` if all 7 are present, and only falls back to the network download if the bundled copy is missing/incomplete. Makes the clean-install flow work fully offline when run from a cloned/downloaded repo.
+- **`.gitignore` hardened**: adds `*.bad-*` (corrupt-config quarantine files), `.vscode/`, and per-user runtime artifacts (`settings.json`, `settings.migrated.json`, `resume-state-*.json`, `Logs/`) so they can't be accidentally committed from a developer's working tree.
+
+### Fixed (round 5 - type coercion + theme resilience)
+- **Boolean coercion bug in state restore**: `[bool]"false"` returns `$true` in PowerShell (any non-empty string is truthy), so a hand-edited `settings.json` containing `"StartMin": "false"` would silently *enable* the flag on load. New `ConvertTo-SafeBool` helper parses string/int/bool uniformly (`true/yes/on/1/enabled` = true; `false/no/off/0/disabled` = false; anything else returns the caller-supplied default). All 18 boolean restores in `Apply-StateToControls` and `Get-NormalizedStateObject` now go through it. Verified with a 13-case self-test covering null, bool, int, and mixed-case string inputs.
+- **Numeric parse safety in `Get-NormalizedStateObject`**: integer fields now use `[int]::TryParse` with per-field defaults, so `"MaxSim": "three"` no longer throws at comparison time.
+- **`Apply-GuiTheme` guards against disposed controls**: `Update-Control` checks `IsDisposed` before reading any property, and the recursive `foreach ($c in $ctrl.Controls)` step is wrapped in try/catch. A partially-torn form during teardown (or a stale reference) can no longer wedge a theme change.
+
+### Fixed (round 4 - UI responsiveness + thread safety)
+- **Form.Add_Resize debounced** via a 60ms throttling timer. The Form fires `Resize` per drag-pixel, which was running the full `Sync-PageCanvases` + `Resize-ThemePreview` + `Layout-Footer` 100+ times during a single window drag. The batched layout now runs once the user pauses.
+- **`Update-StatusVisual` checks `InvokeRequired`** before marshaling onto the UI thread. Previously every status update took the cross-thread hop path even when already on the UI thread - wasted work plus a failure surface if the marshal threw.
+- **Status-update cross-thread exceptions are swallowed** (with try/catch around the Invoke call) so a status write during form teardown can't propagate an uncaught exception.
+
+### Fixed (round 3 - deeper edge cases)
+- **Fixed my own bug from round 1**: `if (Test-Path $bundledJava -or Test-Path $bundledJavaw)` was parsed as `Test-Path` receiving `-or` as an argument (always truthy), so the audit would never correctly report "no JRE". Added required parens.
+- **`Execute-Operations` hardened for Modify mode**: refuses to proceed if the selected install path does not contain `JDownloader2.exe`. Previously a typo could cause cfg/ to be created in an unrelated folder. Also validates the download-folder parent exists before any writes.
+- **Apply button re-entrancy**: a rapid double-click on Apply could fire the flow twice before `Set-WorkspaceBusyState` disabled the button. New `$script:ApplyInFlight` latch plus an immediate `BtnExec.Enabled = $false` on entry blocks this.
+- **Icon file locks released**: both `$Form.Icon` and the sidebar `$LogoBox.Image` used `FromFile`, which holds an OS-level file handle for the life of the Image. Switched to in-memory byte array + `MemoryStream` + `Bitmap` copy so the file is released immediately (lets the user update `icon.ico`/`icon.png` while the app is running).
+- **`Show-Page` guards** against unknown/disposed buttons and disposed target pages before toggling `Visible`.
+- **`Register-LangControl` dedupes** accidental double-registrations of the same control+key pair.
+- **Stale `.json.tmp` sweep**: at the end of a successful apply, any `*.json.tmp` siblings in `cfg/` (ours from a prior crash, or left over from an external tool) are removed. `Write-JsonAtomic` cleans its own on success, but a hard crash between write and move could leave one behind.
+- **Startup WorkDir hygiene**: items older than 7 days in `$env:TEMP\JD2_Ult_Tool_v13_0` are removed on launch so TEMP doesn't accumulate gigabytes of unpacked installers/icons over many runs.
+- **`$Form.Text`** at construction uses `Get-LangValue` with the `$script:AppTitle` fallback so an already-started language load can pre-populate the title and we never show a null.
+- **`$PSScriptRoot`-null safety** for icon paths when launched via `iex` mode (where `$PSScriptRoot` is empty).
+
+### Fixed (round 2 - deeper hardening)
+- **`Set-JsonConfig` no longer overwrites existing config files.** It now reads the existing JSON, merges the caller's keys on top, and writes atomically. This preserves unrelated JDownloader-managed keys that the tool doesn't know about (previously a `Set-JsonConfig` of a single flag wiped the rest of the file).
+- **All config writes are now atomic** via a new `Write-JsonAtomic` helper (write to `.tmp`, then `Move-Item` into place). The three raw `Set-Content` calls in `Execute-Operations` (GUI, General, Tray, Update settings) were converted.
+- **Corrupt config files are quarantined** (`*.bad-<timestamp>`) instead of being treated as empty - the rewritten file is fresh and recoverable.
+- **Stale `$sender` reference** in the theme-preloader timer tick (leftover from an earlier rename) would have thrown on any "job not found" branch. Removed.
+- **Theme-preloader robustness**: instance-unique job name (`JD2UM_ThemeFetcher_<PID>`) eliminates cross-instance collisions; 60-second timeout hard-stops the polling timer if the job hangs; `Failed`/`Stopped` job states now clean up properly instead of spinning forever; TLS 1.2 is re-enforced inside the child runspace.
+- **Installer-safety guard on uninstall**: `Task-FullUninstall` refuses to `Remove-Item -Recurse` a drive root, Windows system folder, user profile, `ProgramData`, or any path that doesn't contain a JDownloader/uninstaller marker. Prevents catastrophic deletions if the install-path field is edited incorrectly.
+- **`Detect-JDPath` uses environment variables**, not hardcoded `C:\`/`D:\`. Probes `D:`/`E:`/`F:` only if those drives actually exist. Registry fallback unchanged.
+- **Legacy settings migration** no longer re-migrates on every launch - the old ProgramData copy is renamed to `settings.migrated.json` after a successful copy.
+- **Resume-state files are unique per launch** (`resume-state-<pid>-<guid>.json`), atomic on write, and size-capped at 1 MB on read (defense against bloated/crafted handoffs).
+- **`Trigger-Update` checks for the exe first**, logs on failure, and surfaces `-update` launch errors (previously silently no-op'd).
+- **Repair > Reset config / Reset theme / Clear cache** rewritten from one-liners: proper `Join-Path` composition, prompt cancellation short-circuits cleanly, and Clear Cache now also removes `logs\`, `cfg\tmp\`, and `update\*.tmp` (previously ignored the biggest sources of bloat). Clear Cache reports the count of items removed.
+- **Safe Mode launch** surfaces `Start-Process` errors instead of silently pretending to launch.
+- **`Task-ExtractIcons`** removes its `$WorkDir\IconsTemp` staging folder after the copy, so TEMP no longer accumulates unpacked icon archives.
+- **`Task-PatchLaf`** uses `Write-JsonAtomic` (was non-atomic `Set-Content`), and guards against a missing theme JSON.
+
+### Changed (round 2)
+- `$GlobalTimers`, `$LanguageRegistry`, and `$PageRegistry` switched from `@()` + `+=` to `System.Collections.Generic.List` to eliminate O(n) rebind-per-append during GUI construction (hundreds of calls per launch).
+
+### Fixed (correctness / reliability)
+- **Icon patch now rolls back on failure.** `Task-PatchExeIcon` used to leave the install in a broken state if Resource Hacker failed mid-flight. It now preserves the pre-patch binary, checks the exit code, and restores the original exe if the patched output is missing or empty.
+- **Installer pipeline no longer reuses stale parts.** `Task-Install` deletes any leftover `installer.7z.*` parts and the previous extract folder before downloading, verifies all 7 parts are present on disk, checks 7-Zip's exit code, and requires a post-install detection before reporting success.
+- **Download-File now rejects HTML error pages.** A status-200 response that serves an HTML login/404 page no longer passes the size check; the payload is sniffed for HTML/XML markers and the file is deleted on mismatch.
+- **Download-File removes stale destination first**, so a later failure cannot appear successful because a leftover file is still present.
+- **Kill-JDownloader safer.** The javaw/JDownloader2 kill path wraps `MainModule.FileName` access (which throws under access-denied) and only terminates processes that are clearly JDownloader.
+- **Task-ExtractIcons checks 7z exit code** and verifies an `images` directory exists before copying.
+- **Save-Settings is now atomic.** Writes go to `settings.json.tmp` first and move into place, so a crash during write can never corrupt settings.
+- **Load-Settings quarantines corrupt JSON** (renames to `.bad-<timestamp>`) so the next run starts from a clean default instead of refusing to load.
+- **Atomic language-file replace.** `Load-Language` now retries, uses a longer timeout, tolerates an OrderedDictionary fallback (the previous `$dict.PSObject.Properties` iteration produced garbage keys on that code path), and keeps a known-good default-English payload when nothing else is available.
+- **Update-InterfaceText no longer nulls labels** when a translation JSON omits a key — it now falls back through `Lang → DefaultLang`.
+- **Elevation flow works under `iex`.** `Request-ElevatedApply` previously wrote `-File ""` when `$PSCommandPath` was null (web-launch mode); it now resolves via `$MyInvocation`, and if neither is available it re-stages the canonical script from GitHub before relaunching elevated.
+- **Settings paths are robust when `LOCALAPPDATA`/`TEMP`/`ProgramData` are unset**; fallbacks compute a sane per-user location.
+- **NumericUpDown state restore clamps to Min/Max** so a stale/out-of-range saved value never throws at load.
+- **FolderBrowserDialog is now disposed** (memory/handle leak) and is scoped to the main form so it centers correctly over the app.
+- **LinkLabel click validates URL scheme**; only `https?://` targets are launched so a malformed Tag can't Start-Process an arbitrary local command.
+- **Removed the two dead config templates** (`Template_RemoteAPI`, `Template_SilentMode`) that were unused and carried malformed quote escaping the PowerShell parser flagged as errors.
+- **Auto-elevation no longer assigns to the reserved `$sender` automatic variable** in timer/FormClosing handlers.
+
+### Added
+- **Log retention**: keeps the 20 most recent log files in `Logs/` and prunes older ones.
+- **Config backup retention**: `Backup-JD` keeps only the 10 most recent backup folders in `cfg-backup/`.
+- **Run-Audit** now additionally checks for a bundled JRE, falls back to looking up system `javaw`/`JAVA_HOME`, and warns when free space on the install drive is below 1 GB.
+- **Language dropdown** displays friendly localized names (e.g., "English [en]", "Español [es]", "日本語 [ja]") instead of bare ISO codes — SelectedItem still carries the code, so the rest of the app is unaffected.
+- **Utility helpers**: `Set-NumericSafe`, `Test-StateHas`, `Show-FolderPicker`, `Get-LanguageDisplayName`, `Test-LooksLikeHtmlErrorPage`.
+
+### Changed
+- Version bumped to 13.7.0 and centralized in a single `$script:AppVersion` constant. `$DefaultLang.Title` derives from this constant instead of being hard-coded (previously read "v13.5.0" while the script was 13.6.0).
+- Title string in the window and default-language dictionary always match the actual script version.
+- `"Available later"` button label for the restore action changed to `"Available after first run"` (the prior label implied a time-delay rather than a precondition).
+
 ## [v13.6.0] - 2026-04-16
 
 ### Added

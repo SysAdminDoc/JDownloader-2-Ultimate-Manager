@@ -3,7 +3,7 @@
 # JDownloader 2 Ultimate Manager  
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-13.6.0-58A6FF?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-13.7.0-58A6FF?style=for-the-badge">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
   <img alt="Platform" src="https://img.shields.io/badge/platform-PowerShell-58A6FF?style=for-the-badge">
 </p>
