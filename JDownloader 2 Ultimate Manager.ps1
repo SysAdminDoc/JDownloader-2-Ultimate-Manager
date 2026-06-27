@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.7.0)
+    JDownloader 2 ULTIMATE MANAGER (v13.8.0)
     - Premium workspace UI with surface-based layout, hero sections, and card tiles.
     - Enhanced 18-token theme palette with semantic colors across all four themes.
     - Workspace state tracking with change detection and restore capability.
@@ -9,14 +9,18 @@
 
 param(
     [string]$ResumeStateFile,
-    [switch]$ResumeApply
+    [switch]$ResumeApply,
+    [switch]$Portable,
+    [switch]$Silent,
+    [string]$Preset,
+    [string]$ExportPreset
 )
 
 Set-StrictMode -Off
 $ErrorActionPreference = 'Continue'
 
 # Script identity - single source of truth for versioning
-$script:AppVersion = '13.7.0'
+$script:AppVersion = '13.8.0'
 $script:AppName    = 'JDownloader 2 Ultimate Manager'
 $script:AppTitle   = "$script:AppName v$script:AppVersion"
 
@@ -33,6 +37,10 @@ $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Pri
 $script:IsElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $script:ResumeStateFile = if ([string]::IsNullOrWhiteSpace($ResumeStateFile)) { $null } else { $ResumeStateFile }
 $script:ResumeApplyRequested = [bool]$ResumeApply
+$script:PortableMode = [bool]$Portable
+$script:SilentMode = [bool]$Silent
+$script:PresetPath = if ([string]::IsNullOrWhiteSpace($Preset)) { $null } else { $Preset }
+$script:ExportPresetPath = if ([string]::IsNullOrWhiteSpace($ExportPreset)) { $null } else { $ExportPreset }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -68,8 +76,16 @@ $LocalAppDataRoot = if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { Join-
 $ProgramDataRoot  = if ([string]::IsNullOrWhiteSpace($env:ProgramData))  { Join-Path $env:SystemDrive 'ProgramData' } else { $env:ProgramData }
 $TempRoot         = if ([string]::IsNullOrWhiteSpace($env:TEMP))         { Join-Path $LocalAppDataRoot 'Temp' }         else { $env:TEMP }
 
+$PortableRoot = if ($script:PortableMode) {
+    $base = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($base) -and $MyInvocation.MyCommand -and -not [string]::IsNullOrWhiteSpace($MyInvocation.MyCommand.Path)) {
+        $base = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+    if ([string]::IsNullOrWhiteSpace($base)) { $base = (Get-Location).Path }
+    Join-Path $base 'JD2-UM'
+} else { $null }
 $LegacyAppDataDir = Join-Path $ProgramDataRoot  'JD2-Ultimate-Manager'
-$AppDataDir       = Join-Path $LocalAppDataRoot 'JD2-Ultimate-Manager'
+$AppDataDir       = if ($script:PortableMode) { $PortableRoot } else { Join-Path $LocalAppDataRoot 'JD2-Ultimate-Manager' }
 $LogDir           = Join-Path $AppDataDir       'Logs'
 $WorkDir          = Join-Path $TempRoot         'JD2_Ult_Tool_v13_0'
 $SettingsFile     = Join-Path $AppDataDir       'settings.json'
@@ -643,7 +659,8 @@ function Request-ElevatedApply {
     $processInfo = New-Object System.Diagnostics.ProcessStartInfo
     if ($scriptPath -and (Test-Path $scriptPath)) {
         $processInfo.FileName = "powershell.exe"
-        $processInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$scriptPath`" -ResumeApply -ResumeStateFile `"$resumeFile`""
+        $portableArg = if ($script:PortableMode) { " -Portable" } else { "" }
+        $processInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$scriptPath`" -ResumeApply -ResumeStateFile `"$resumeFile`"$portableArg"
     } else {
         # No resolvable script on disk (web-launched via iex). Re-fetch the canonical script,
         # save it locally, and relaunch elevated with the resume handoff.
@@ -656,7 +673,8 @@ function Request-ElevatedApply {
             return $false
         }
         $processInfo.FileName = "powershell.exe"
-        $processInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$webScript`" -ResumeApply -ResumeStateFile `"$resumeFile`""
+        $portableArg = if ($script:PortableMode) { " -Portable" } else { "" }
+        $processInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$webScript`" -ResumeApply -ResumeStateFile `"$resumeFile`"$portableArg"
     }
     $processInfo.Verb = "RunAs"
     try {
@@ -1126,7 +1144,8 @@ function Detect-JDPath {
     }
     # Common alternate drives - only probe drives that actually exist.
     foreach ($drive in 'D:','E:','F:') {
-        if (Test-Path (Join-Path $drive '\')) {
+        $driveRoot = "$drive\"
+        if (Test-Path -LiteralPath $driveRoot) {
             $candidates.Add(($drive + '\JDownloader 2'))
             $candidates.Add(($drive + '\JDownloader'))
         }
@@ -1766,7 +1785,7 @@ function Execute-Operations {
             $selectedSource = if ($GUI_State.InstallSource) { $GUI_State.InstallSource } else { "GitHub" }
             $installSucceeded = Task-Install -Source $selectedSource
 
-            if (-not $installSucceeded -and $selectedSource -eq "GitHub") {
+            if (-not $installSucceeded -and $selectedSource -eq "GitHub" -and -not $script:SilentMode) {
                 $fallback = [System.Windows.Forms.MessageBox]::Show(
                     "GitHub install did not complete successfully. Do you want to try the manual Mega flow instead?",
                     "Try alternate install source",
@@ -1882,7 +1901,9 @@ function Execute-Operations {
         $ProgressBar.Style = "Continuous"; $ProgressBar.MarqueeAnimationSpeed = 0; $ProgressBar.Value = 0
         Log-Status "CRITICAL ERROR: $_" "FATAL"
         Log-Status "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
-        [System.Windows.Forms.MessageBox]::Show("An error occurred during execution. Check the log file for details.`n`nError: $_", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        if (-not $script:SilentMode) {
+            [System.Windows.Forms.MessageBox]::Show("An error occurred during execution. Check the log file for details.`n`nError: $_", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
         return $false
     }
 }
@@ -2292,6 +2313,8 @@ $CboLang.Add_Format({
     if ([string]::IsNullOrWhiteSpace($code)) { return }
     $evt.Value = Get-LanguageDisplayName $code
 })
+$BtnImportPreset = New-Button -Parent $DashPrefs -Text "Import preset" -Location (New-Object System.Drawing.Point(24, 178)) -Size (New-Object System.Drawing.Size(140, 34)) -Tag "SecondaryButton"
+$BtnExportPreset = New-Button -Parent $DashPrefs -Text "Export preset" -Location (New-Object System.Drawing.Point(178, 178)) -Size (New-Object System.Drawing.Size(140, 34)) -Tag "SecondaryButton"
 $DashPrefsNote = New-Surface -Parent $DashPrefs -Location (New-Object System.Drawing.Point(668, 80)) -Size (New-Object System.Drawing.Size(348, 144)) -Tag "Callout"
 $DashPrefsNoteHeading = New-Label -Parent $DashPrefsNote -Text "Workspace status" -Location (New-Object System.Drawing.Point(18, 16)) -Font (New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold))
 $DashPrefsStateValue = New-Label -Parent $DashPrefsNote -Text "No saved workspace yet" -Location (New-Object System.Drawing.Point(18, 40)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(310, 24)) -AutoSize $false
@@ -2342,6 +2365,10 @@ function Layout-Dashboard {
     $LblLang.Location = New-Object System.Drawing.Point(348, 96)
     $CboLang.Location = New-Object System.Drawing.Point(348, 124)
     $CboLang.Size = New-Object System.Drawing.Size(290, 36)
+    $BtnImportPreset.Location = New-Object System.Drawing.Point(24, 178)
+    $BtnImportPreset.Size = New-Object System.Drawing.Size(140, 34)
+    $BtnExportPreset.Location = New-Object System.Drawing.Point(178, 178)
+    $BtnExportPreset.Size = New-Object System.Drawing.Size(140, 34)
     $DashPrefsNote.Location = New-Object System.Drawing.Point(668, 80)
     $DashPrefsNote.Size = New-Object System.Drawing.Size(348, 144)
     $DashPrefsStateValue.Size = New-Object System.Drawing.Size(310, 24)
@@ -2632,6 +2659,129 @@ function Get-NormalizedStateObject {
     }
 }
 
+function Get-DefaultWorkspaceState {
+    $detected = Detect-JDPath
+    $mode = if ($detected) { "Modify" } else { "Install" }
+    return [ordered]@{
+        Mode            = $mode
+        InstallSource   = if ($mode -eq "Install") { "GitHub" } else { "" }
+        InstallPath     = if ($detected) { $detected } else { "" }
+        ThemeName       = "Flat Dark"
+        GuiThemeName    = "Dark (Default)"
+        LanguageCode    = $CurrentLangCode
+        IconPack        = "Default"
+        WindowDec       = $true
+        MaxSim          = 3
+        DlFolder        = ""
+        StartMin        = $false
+        MinToTray       = $true
+        CloseToTray     = $true
+        PatchExe        = $true
+        AutoUpdate      = $true
+        ForceMinimal    = $false
+        PauseSpeed      = 10240
+        MaxChunks       = 1
+        MaxPerHost      = 1
+        HashCheck       = $true
+        PreserveFileDate= $false
+        ClipboardMonitor= $true
+        DisableLocalAPI = $true
+        WriteVmOptions  = $false
+    }
+}
+
+function Read-PresetFile {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Log-Status "Preset file not found: $Path" "ERROR"
+        return $null
+    }
+    try {
+        $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($file.Length -gt 1MB) {
+            Log-Status "Preset file is too large; refusing to load: $Path" "ERROR"
+            return $null
+        }
+        $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            Log-Status "Preset file is empty: $Path" "ERROR"
+            return $null
+        }
+        $data = $raw | ConvertFrom-Json -ErrorAction Stop
+        return Get-NormalizedStateObject -State $data
+    } catch {
+        Log-Status "Preset file could not be loaded: $_" "ERROR"
+        return $null
+    }
+}
+
+function Save-PresetFile {
+    param($State, [string]$Path)
+    if (-not $State -or [string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try {
+        $normalized = Get-NormalizedStateObject -State $State
+        $targetDir = Split-Path -Parent $Path
+        if (-not [string]::IsNullOrWhiteSpace($targetDir) -and -not (Test-Path -LiteralPath $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+        $payload = [ordered]@{
+            AppName   = $script:AppName
+            Version   = $script:AppVersion
+            Exported  = (Get-Date).ToString("o")
+            Workspace = $normalized
+        }
+        $tmp = "$Path.tmp"
+        $payload.Workspace | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $tmp -Encoding UTF8 -ErrorAction Stop
+        Move-Item -LiteralPath $tmp -Destination $Path -Force -ErrorAction Stop
+        Log-Status "Preset exported to $Path." "SUCCESS"
+        return $true
+    } catch {
+        Log-Status "Preset export failed: $_" "ERROR"
+        try { Remove-Item -LiteralPath "$Path.tmp" -Force -ErrorAction SilentlyContinue } catch {}
+        return $false
+    }
+}
+
+function Start-SilentWorkspace {
+    $state = $null
+    if ($script:PresetPath) {
+        $state = Read-PresetFile -Path $script:PresetPath
+        if (-not $state) { return 3 }
+    }
+    if (-not $state) { $state = Load-Settings }
+    if (-not $state) { $state = Get-DefaultWorkspaceState }
+    $state = Get-NormalizedStateObject -State $state
+
+    if ($script:ExportPresetPath) {
+        if (Save-PresetFile -State $state -Path $script:ExportPresetPath) { return 0 }
+        return 4
+    }
+
+    if (-not $script:IsElevated) {
+        Log-Status "Silent mode requires an elevated PowerShell session. No changes were written." "ERROR"
+        return 5
+    }
+
+    $script:SilentMode = $true
+    $script:ApplyInFlight = $true
+    $script:InitialWorkspaceState = $state
+    $script:SavedWorkspaceState = $state
+    $script:ProgressShim = [pscustomobject]@{
+        Value = 0
+        Style = "Continuous"
+        MarqueeAnimationSpeed = 0
+    }
+    Set-Variable -Name ProgressBar -Value $script:ProgressShim -Scope Script
+    if (Execute-Operations -GUI_State $state) { return 0 }
+    return 1
+}
+
+if ($script:SilentMode -or $script:ExportPresetPath) {
+    $exitCode = Start-SilentWorkspace
+    [Environment]::Exit($exitCode)
+}
+
 function Get-LastAppliedDisplayText {
     $sourcePath = Get-SettingsSourcePath
     if (Test-Path $sourcePath) {
@@ -2751,9 +2901,11 @@ function Apply-AccessibilityMetadata {
 
     Set-ControlMetadata -Control $CboGuiTheme -Name "Workspace theme" -Description "Choose the visual theme for this manager window." -TabIndex 0
     Set-ControlMetadata -Control $CboLang     -Name "Workspace language" -Description "Choose the language used inside this manager window." -TabIndex 1
-    Set-ControlMetadata -Control $BtnDashInstallJump -Name "Open installation from dashboard" -Description "Jump directly to installation path and mode settings." -TabIndex 2
-    Set-ControlMetadata -Control $BtnDashThemeJump   -Name "Open themes from dashboard" -Description "Jump directly to theme previews and icon options." -TabIndex 3
-    Set-ControlMetadata -Control $BtnDashRepairJump  -Name "Open repair tools from dashboard" -Description "Jump directly to maintenance and recovery tools." -TabIndex 4
+    Set-ControlMetadata -Control $BtnImportPreset -Name "Import preset" -Description "Load workspace selections from a JSON preset file." -TabIndex 2
+    Set-ControlMetadata -Control $BtnExportPreset -Name "Export preset" -Description "Save current workspace selections to a JSON preset file." -TabIndex 3
+    Set-ControlMetadata -Control $BtnDashInstallJump -Name "Open installation from dashboard" -Description "Jump directly to installation path and mode settings." -TabIndex 4
+    Set-ControlMetadata -Control $BtnDashThemeJump   -Name "Open themes from dashboard" -Description "Jump directly to theme previews and icon options." -TabIndex 5
+    Set-ControlMetadata -Control $BtnDashRepairJump  -Name "Open repair tools from dashboard" -Description "Jump directly to maintenance and recovery tools." -TabIndex 6
     Set-ControlMetadata -Control $TxtPath     -Name "JDownloader installation folder" -Description "Enter the folder for the JDownloader installation you want to modify, or leave it blank in clean install mode." -TabIndex 0
     Set-ControlMetadata -Control $BtnBrowse   -Name "Browse for installation folder" -Description "Open a folder picker for the JDownloader installation folder." -TabIndex 1
     Set-ControlMetadata -Control $BtnDetect   -Name "Auto-detect installation folder" -Description "Try to locate the current JDownloader installation automatically." -TabIndex 2
@@ -3606,6 +3758,37 @@ $BtnRestoreWorkspace.Add_Click({
         Log-Status "Workspace selections were restored from the last successful run." "SUCCESS"
     }
 })
+$BtnImportPreset.Add_Click({
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    try {
+        $dlg.Title = "Import workspace preset"
+        $dlg.Filter = "JSON preset (*.json)|*.json|All files (*.*)|*.*"
+        $dlg.CheckFileExists = $true
+        if ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK) {
+            $presetState = Read-PresetFile -Path $dlg.FileName
+            if ($presetState) {
+                Apply-StateToControls -State $presetState
+                Log-Status "Preset imported. Review the workspace before applying." "SUCCESS"
+            }
+        }
+    } finally {
+        $dlg.Dispose()
+    }
+})
+$BtnExportPreset.Add_Click({
+    $dlg = New-Object System.Windows.Forms.SaveFileDialog
+    try {
+        $dlg.Title = "Export workspace preset"
+        $dlg.Filter = "JSON preset (*.json)|*.json|All files (*.*)|*.*"
+        $dlg.DefaultExt = "json"
+        $dlg.FileName = "jd2-ultimate-manager-preset.json"
+        if ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK) {
+            [void](Save-PresetFile -State (Get-CurrentGuiState) -Path $dlg.FileName)
+        }
+    } finally {
+        $dlg.Dispose()
+    }
+})
 
 foreach ($entry in $pages.GetEnumerator()) {
     $entry.Key.Add_Click({ Show-Page -Button $this })
@@ -3626,6 +3809,8 @@ $ToolTip.SetToolTip($TxtPath, "Required for modify mode. Optional for clean inst
 $ToolTip.SetToolTip($TxtDl, "Leave blank to reset the download folder to JDownloader's default.")
 $ToolTip.SetToolTip($CboGuiTheme, "Change the visual theme of this manager window.")
 $ToolTip.SetToolTip($CboLang, "Change the language used by this manager window.")
+$ToolTip.SetToolTip($BtnImportPreset, "Load workspace selections from a JSON preset.")
+$ToolTip.SetToolTip($BtnExportPreset, "Save the current workspace selections as a JSON preset.")
 $ToolTip.SetToolTip($BtnRestoreWorkspace, "Restore the last successful workspace selections and discard pending edits.")
 $ToolTip.SetToolTip($CboTheme, "Pick the JDownloader look and feel that should be installed.")
 $ToolTip.SetToolTip($CboIcons, "Icon packs can be changed independently from the theme preset.")

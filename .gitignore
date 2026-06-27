@@ -11,6 +11,7 @@ settings.json
 settings.migrated.json
 resume-state-*.json
 Logs/
+JD2-UM/
 
 # Markdown files local-only (except README)
 *.md

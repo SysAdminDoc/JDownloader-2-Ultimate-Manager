@@ -3,7 +3,7 @@
 # JDownloader 2 Ultimate Manager  
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-13.7.0-58A6FF?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-13.8.0-58A6FF?style=for-the-badge">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
   <img alt="Platform" src="https://img.shields.io/badge/platform-PowerShell-58A6FF?style=for-the-badge">
 </p>
@@ -47,6 +47,7 @@ Run this command in **PowerShell** to launch instantly:
 - Adjustable simultaneous downloads, pause speed, and networking behavior  
 - Tray and taskbar behavior control (Minimize to Tray, Close to Tray)  
 - Fully validated download directory selection  
+- Portable settings mode, JSON workspace presets, and silent preset application for repeatable deployments  
 
 ### 5. Repair & Maintenance
 - Full configuration reset to factory defaults while preserving downloads  
@@ -106,10 +107,16 @@ Run this command in **PowerShell** to launch instantly:
 After reviewing each page, click **Apply Workspace** in the footer.  
 The manager opens a confirmation review first, then shows real-time progress for install, file patching, configuration writes, hardening steps, and recovery actions.
 
+For repeatable deployments, export a preset from the dashboard or run:
+
+    powershell -ExecutionPolicy Bypass -File "JDownloader 2 Ultimate Manager.ps1" -Portable -Silent -Preset ".\preset.json"
+
 ---
 
 ## Technical Details
 - **Settings Persistence:** Stored in `%LOCALAPPDATA%\JD2-Ultimate-Manager\settings.json` with legacy `ProgramData` settings still recognized  
+- **Portable Mode:** `-Portable` stores settings, logs, language cache, and presets beside the script in `.\JD2-UM\`  
+- **Preset Automation:** `-ExportPreset <path>` writes the current/default workspace to JSON; `-Silent -Preset <path>` applies it without opening the GUI  
 - **JSON Manipulation:** Edits JD2’s config files directly, without requiring JD2 to be running  
 - **Dependencies:** Automatically downloads 7zr.exe and Resource Hacker when needed  
 - **Security:** All outbound web requests enforce TLS 1.2  
