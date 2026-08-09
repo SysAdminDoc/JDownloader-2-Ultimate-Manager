@@ -173,7 +173,7 @@ $script:LiveCaptchaBitmap = $null
 # --- Default English Fallback ---
 $DefaultLang = [ordered]@{
     "Title" = $script:AppTitle;
-    "Dashboard" = "Dashboard"; "LiveControl" = "Live Control"; "Installation" = "Installation"; "Themes" = "Themes";
+    "Dashboard" = "Dashboard"; "LiveControl" = "Live Control"; "Accounts" = "Accounts"; "Installation" = "Installation"; "Themes" = "Themes";
     "Behavior" = "Behavior"; "Hardening" = "Hardening"; "Repair" = "Repair Tools";
     "Execute" = "Apply Workspace"; "Status" = "Status: Ready";
     "Running" = "Applying workspace...";
@@ -2248,6 +2248,8 @@ $BtnDashboard    = New-Button -Parent $Sidebar -LangKey "Dashboard"    -Location
 $sbY += $sbH + $sbGap
 $BtnLiveControl  = New-Button -Parent $Sidebar -LangKey "LiveControl"  -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
 $sbY += $sbH + $sbGap
+$BtnAccounts     = New-Button -Parent $Sidebar -LangKey "Accounts"     -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
 $BtnInstallation = New-Button -Parent $Sidebar -LangKey "Installation" -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
 $sbY += $sbH + $sbGap
 $BtnTheme        = New-Button -Parent $Sidebar -LangKey "Themes"       -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
@@ -2261,6 +2263,7 @@ $BtnRepair       = New-Button -Parent $Sidebar -LangKey "Repair"       -Location
 $script:NavIndicators = @{
     $BtnDashboard    = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnDashboard.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
     $BtnLiveControl  = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnLiveControl.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
+    $BtnAccounts     = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnAccounts.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
     $BtnInstallation = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnInstallation.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
     $BtnTheme        = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnTheme.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
     $BtnBehavior     = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnBehavior.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
@@ -2291,6 +2294,7 @@ $PageDashboard    = New-PagePanel -CanvasHeight 682; [void]$MainPanel.Controls.A
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
 $PageLiveControl  = New-PagePanel -CanvasHeight 1030; [void]$MainPanel.Controls.Add($PageLiveControl)
+$PageAccounts     = New-PagePanel -CanvasHeight 660; [void]$MainPanel.Controls.Add($PageAccounts)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
 $PageBehavior     = New-PagePanel -CanvasHeight 740; [void]$MainPanel.Controls.Add($PageBehavior)
@@ -2299,6 +2303,7 @@ $PageRepair       = New-PagePanel -CanvasHeight 572; [void]$MainPanel.Controls.A
 
 $DashboardCanvas = Get-PageCanvas $PageDashboard
 $LiveControlCanvas = Get-PageCanvas $PageLiveControl
+$AccountsCanvas = Get-PageCanvas $PageAccounts
 $InstallationCanvas = Get-PageCanvas $PageInstallation
 $ThemeCanvas = Get-PageCanvas $PageTheme
 $BehaviorCanvas = Get-PageCanvas $PageBehavior
@@ -2733,6 +2738,164 @@ $script:LiveApiPollTimer.Add_Tick({
     }
 })
 [void]$GlobalTimers.Add($script:LiveApiPollTimer)
+
+# --- Account Manager Page ---
+$AccountsHero = New-Surface -Parent $AccountsCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 128))
+[void](New-Label -Parent $AccountsHero -Text "ACCOUNT MANAGER" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+[void](New-Label -Parent $AccountsHero -Text "Keep premium hoster access in one place" -Location (New-Object System.Drawing.Point(24, 44)) -Font (New-Object System.Drawing.Font("Segoe UI", 22, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(650, 38)) -AutoSize $false)
+[void](New-Label -Parent $AccountsHero -Text "Accounts are managed by JDownloader. UM sends credentials for the current action and never saves the password in its own workspace settings." -Location (New-Object System.Drawing.Point(24, 88)) -Size (New-Object System.Drawing.Size(710, 24)) -AutoSize $false -Tag "SubHeader")
+$AccountsConnectionBadge = New-Badge -Parent $AccountsHero -Text "Not loaded" -Location (New-Object System.Drawing.Point(812, 28)) -Size (New-Object System.Drawing.Size(164, 30)) -Tag "BadgeNeutral"
+[void](New-Label -Parent $AccountsHero -Text "OAuth hosters still require their provider's browser consent flow." -Location (New-Object System.Drawing.Point(782, 70)) -Size (New-Object System.Drawing.Size(210, 38)) -AutoSize $false -Tag "BodyMuted")
+
+$AccountsListSurface = New-Surface -Parent $AccountsCanvas -Location (New-Object System.Drawing.Point(0, 146)) -Size (New-Object System.Drawing.Size(1040, 310)) -Tag "Surface"
+[void](New-Label -Parent $AccountsListSurface -Text "Configured accounts" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+$AccountsSummary = New-Label -Parent $AccountsListSurface -Text "Refresh to query JDownloader." -Location (New-Object System.Drawing.Point(220, 22)) -Size (New-Object System.Drawing.Size(580, 20)) -AutoSize $false -Tag "MutedStrong"
+$BtnAccountsRefresh = New-Button -Parent $AccountsListSurface -Text "Refresh" -Location (New-Object System.Drawing.Point(874, 16)) -Size (New-Object System.Drawing.Size(142, 32)) -Tag "SecondaryButton"
+$AccountGrid = New-Object System.Windows.Forms.DataGridView
+$AccountGrid.Location = New-Object System.Drawing.Point(24, 56)
+$AccountGrid.Size = New-Object System.Drawing.Size(992, 232)
+$AccountGrid.Tag = "QueueGrid"
+$AccountGrid.ReadOnly = $true
+$AccountGrid.AllowUserToAddRows = $false
+$AccountGrid.AllowUserToDeleteRows = $false
+$AccountGrid.AllowUserToResizeRows = $false
+$AccountGrid.AutoGenerateColumns = $false
+$AccountGrid.RowHeadersVisible = $false
+$AccountGrid.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+$AccountGrid.MultiSelect = $true
+$AccountGrid.AutoSizeRowsMode = [System.Windows.Forms.DataGridViewAutoSizeRowsMode]::None
+$AccountGrid.RowTemplate.Height = 28
+[void]$AccountGrid.Columns.Add("Hoster", "Hoster"); $AccountGrid.Columns["Hoster"].Width = 190
+[void]$AccountGrid.Columns.Add("Username", "Username"); $AccountGrid.Columns["Username"].Width = 220
+[void]$AccountGrid.Columns.Add("State", "State"); $AccountGrid.Columns["State"].Width = 190
+[void]$AccountGrid.Columns.Add("Traffic", "Traffic left"); $AccountGrid.Columns["Traffic"].Width = 150
+[void]$AccountGrid.Columns.Add("ValidUntil", "Valid until"); $AccountGrid.Columns["ValidUntil"].Width = 140
+$accountEnabledColumn = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
+$accountEnabledColumn.Name = "Enabled"
+$accountEnabledColumn.HeaderText = "Enabled"
+$accountEnabledColumn.Width = 82
+$accountEnabledColumn.ReadOnly = $true
+[void]$AccountGrid.Columns.Add($accountEnabledColumn)
+[void]$AccountsListSurface.Controls.Add($AccountGrid)
+
+$AccountEditorSurface = New-Surface -Parent $AccountsCanvas -Location (New-Object System.Drawing.Point(0, 474)) -Size (New-Object System.Drawing.Size(1040, 160)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $AccountEditorSurface -Text "Add or manage an account" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $AccountEditorSurface -Text "Hoster" -Location (New-Object System.Drawing.Point(24, 54)) -Tag "BodyMuted")
+$TxtAccountHoster = New-TextBox -Parent $AccountEditorSurface -Location (New-Object System.Drawing.Point(24, 78)) -Size (New-Object System.Drawing.Size(190, 32)) -Tag "Input"
+[void](New-Label -Parent $AccountEditorSurface -Text "Username" -Location (New-Object System.Drawing.Point(230, 54)) -Tag "BodyMuted")
+$TxtAccountUsername = New-TextBox -Parent $AccountEditorSurface -Location (New-Object System.Drawing.Point(230, 78)) -Size (New-Object System.Drawing.Size(220, 32)) -Tag "Input"
+[void](New-Label -Parent $AccountEditorSurface -Text "Password" -Location (New-Object System.Drawing.Point(466, 54)) -Tag "BodyMuted")
+$TxtAccountPassword = New-TextBox -Parent $AccountEditorSurface -Location (New-Object System.Drawing.Point(466, 78)) -Size (New-Object System.Drawing.Size(220, 32)) -Tag "Input"
+$TxtAccountPassword.UseSystemPasswordChar = $true
+$BtnAccountAdd = New-Button -Parent $AccountEditorSurface -Text "Add account" -Location (New-Object System.Drawing.Point(704, 78)) -Size (New-Object System.Drawing.Size(126, 32)) -Tag "PrimaryButton"
+$BtnAccountEnable = New-Button -Parent $AccountEditorSurface -Text "Enable selected" -Location (New-Object System.Drawing.Point(24, 120)) -Size (New-Object System.Drawing.Size(132, 30)) -Tag "SuccessButton"
+$BtnAccountDisable = New-Button -Parent $AccountEditorSurface -Text "Disable selected" -Location (New-Object System.Drawing.Point(166, 120)) -Size (New-Object System.Drawing.Size(132, 30)) -Tag "SecondaryButton"
+$BtnAccountRemove = New-Button -Parent $AccountEditorSurface -Text "Remove selected" -Location (New-Object System.Drawing.Point(308, 120)) -Size (New-Object System.Drawing.Size(132, 30)) -Tag "DangerButton"
+[void](New-Label -Parent $AccountEditorSurface -Text "Passwords are sent only to the configured JDownloader API and are cleared after a successful add." -Location (New-Object System.Drawing.Point(466, 122)) -Size (New-Object System.Drawing.Size(540, 22)) -AutoSize $false -Tag "BodyMuted")
+
+function Format-AccountExpiry {
+    param($Value)
+    $milliseconds = 0L
+    try { $milliseconds = [int64]$Value } catch {}
+    if ($milliseconds -le 0) { return "-" }
+    try { return [DateTimeOffset]::FromUnixTimeMilliseconds($milliseconds).ToLocalTime().ToString("yyyy-MM-dd") } catch { return "-" }
+}
+
+function Update-AccountGrid {
+    param($Accounts)
+    if (-not $AccountGrid) { return }
+    try { $AccountGrid.Rows.Clear() } catch { return }
+    $items = @($Accounts | Where-Object { $_ })
+    foreach ($account in $items) {
+        $rowIndex = $AccountGrid.Rows.Add()
+        $row = $AccountGrid.Rows[$rowIndex]
+        $row.Tag = $account
+        $valid = ConvertTo-SafeBool (Get-LiveLinkProperty -Link $account -Name "valid" -Default $false)
+        $enabled = ConvertTo-SafeBool (Get-LiveLinkProperty -Link $account -Name "enabled" -Default $true)
+        $errorText = [string](Get-LiveLinkProperty -Link $account -Name "errorString" -Default "")
+        $state = if (-not $valid -and -not [string]::IsNullOrWhiteSpace($errorText)) { $errorText } elseif ($valid) { "Valid" } else { "Needs refresh" }
+        $trafficLeft = Get-LiveLinkProperty -Link $account -Name "trafficLeft" -Default 0
+        $trafficMax = Get-LiveLinkProperty -Link $account -Name "trafficMax" -Default 0
+        $traffic = if ([int64]$trafficMax -gt 0) { "{0} / {1}" -f (Format-LiveBytes $trafficLeft), (Format-LiveBytes $trafficMax) } else { Format-LiveBytes $trafficLeft }
+        $row.Cells["Hoster"].Value = [string](Get-LiveLinkProperty -Link $account -Name "hostname" -Default "Unknown")
+        $row.Cells["Username"].Value = [string](Get-LiveLinkProperty -Link $account -Name "username" -Default "")
+        $row.Cells["State"].Value = $state
+        $row.Cells["Traffic"].Value = $traffic
+        $row.Cells["ValidUntil"].Value = Format-AccountExpiry (Get-LiveLinkProperty -Link $account -Name "validUntil" -Default 0)
+        $row.Cells["Enabled"].Value = $enabled
+    }
+    $AccountsSummary.Text = "{0} account(s) loaded. Select rows to enable, disable, or remove." -f $items.Count
+}
+
+function Get-SelectedAccountIds {
+    $ids = New-Object System.Collections.Generic.List[long]
+    if (-not $AccountGrid) { return $ids.ToArray() }
+    foreach ($row in $AccountGrid.SelectedRows) {
+        try {
+            $id = [int64](Get-LiveLinkProperty -Link $row.Tag -Name "uuid" -Default 0)
+            if ($id -gt 0 -and -not $ids.Contains($id)) { [void]$ids.Add($id) }
+        } catch {}
+    }
+    return $ids.ToArray()
+}
+
+function Refresh-Accounts {
+    if (-not $script:ApiModuleLoaded) { Log-Status "The JD2 API module could not be loaded." "WARN"; return }
+    try {
+        if (-not $script:LiveApiClient) { $script:LiveApiClient = New-LiveApiClientFromControls }
+        $accounts = Get-JD2Accounts -Client $script:LiveApiClient
+        Update-AccountGrid -Accounts $accounts
+        $AccountsConnectionBadge.Text = "Loaded"
+        $AccountsConnectionBadge.Tag = "BadgeSuccess"
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $AccountsConnectionBadge
+        Log-Status "JDownloader accounts refreshed." "SUCCESS"
+    } catch {
+        $AccountsConnectionBadge.Text = "Unavailable"
+        $AccountsConnectionBadge.Tag = "BadgeDanger"
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $AccountsConnectionBadge
+        Log-Status "Account request failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Add-AccountFromControls {
+    try {
+        if (-not $script:LiveApiClient) { $script:LiveApiClient = New-LiveApiClientFromControls }
+        Add-JD2Account -Client $script:LiveApiClient -PremiumHoster $TxtAccountHoster.Text -AccountUser $TxtAccountUsername.Text -AccountSecret $TxtAccountPassword.Text | Out-Null
+        $TxtAccountPassword.Clear()
+        Log-Status "JDownloader account added." "SUCCESS"
+        Refresh-Accounts
+    } catch {
+        Log-Status "Could not add account: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Set-SelectedAccountsEnabled {
+    param([bool]$Enabled)
+    $ids = @(Get-SelectedAccountIds)
+    if ($ids.Count -eq 0) { Log-Status "Select at least one account first." "WARN"; return }
+    try {
+        if (-not $script:LiveApiClient) { $script:LiveApiClient = New-LiveApiClientFromControls }
+        Set-JD2AccountEnabled -Client $script:LiveApiClient -Ids ([long[]]$ids) -Enabled $Enabled | Out-Null
+        Log-Status (if ($Enabled) { "Selected accounts enabled." } else { "Selected accounts disabled." }) "SUCCESS"
+        Refresh-Accounts
+    } catch {
+        Log-Status "Could not update account state: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Remove-SelectedAccounts {
+    $ids = @(Get-SelectedAccountIds)
+    if ($ids.Count -eq 0) { Log-Status "Select at least one account first." "WARN"; return }
+    if (-not (Show-ActionPrompt -Title "Remove accounts" -Message "Remove the selected account entries from JDownloader? Stored hoster credentials will no longer be available to the download engine." -ConfirmText "Remove accounts" -ConfirmTag "DangerButton")) { return }
+    try {
+        if (-not $script:LiveApiClient) { $script:LiveApiClient = New-LiveApiClientFromControls }
+        Remove-JD2Accounts -Client $script:LiveApiClient -Ids ([long[]]$ids) -Confirm:$false | Out-Null
+        Log-Status "Selected accounts removed." "SUCCESS"
+        Refresh-Accounts
+    } catch {
+        Log-Status "Could not remove accounts: $($_.Exception.Message)" "WARN"
+    }
+}
 
 # --- Installation Page ---
 $InstallHero = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 160))
@@ -3251,7 +3414,8 @@ function Test-WorkspaceHasPendingChanges {
 function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $BtnDashboard    -Name "Dashboard navigation"    -Description "Open the dashboard overview page." -TabIndex 0
     Set-ControlMetadata -Control $BtnLiveControl  -Name "Live control navigation"  -Description "Open the live JDownloader queue and LinkGrabber controls." -TabIndex 1
-    Set-ControlMetadata -Control $BtnInstallation -Name "Installation navigation" -Description "Open installation mode and path settings." -TabIndex 1
+    Set-ControlMetadata -Control $BtnAccounts     -Name "Accounts navigation"     -Description "Open JDownloader premium account management." -TabIndex 2
+    Set-ControlMetadata -Control $BtnInstallation -Name "Installation navigation" -Description "Open installation mode and path settings." -TabIndex 3
     Set-ControlMetadata -Control $BtnTheme        -Name "Themes navigation"       -Description "Open theme and icon customization options." -TabIndex 2
     Set-ControlMetadata -Control $BtnBehavior     -Name "Behavior navigation"     -Description "Open download and window behavior settings." -TabIndex 3
     Set-ControlMetadata -Control $BtnHardening    -Name "Hardening navigation"    -Description "Open the debloat and hardening options page." -TabIndex 4
@@ -3326,6 +3490,14 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $BtnLiveCaptchaSolve -Name "Submit captcha answer" -Description "Submit the captcha answer to JDownloader." -TabIndex 12
     Set-ControlMetadata -Control $BtnLiveCaptchaSkip -Name "Skip captcha" -Description "Skip the current JDownloader captcha prompt." -TabIndex 13
     Set-ControlMetadata -Control $BtnLiveCaptchaRefresh -Name "Refresh captcha prompts" -Description "Refresh the pending JDownloader captcha prompt." -TabIndex 14
+    Set-ControlMetadata -Control $AccountGrid -Name "JDownloader account list" -Description "Shows configured hoster accounts without exposing passwords." -TabIndex 15
+    Set-ControlMetadata -Control $TxtAccountHoster -Name "Premium hoster" -Description "Enter the hoster identifier accepted by JDownloader." -TabIndex 16
+    Set-ControlMetadata -Control $TxtAccountUsername -Name "Account username" -Description "Enter the premium hoster account username." -TabIndex 17
+    Set-ControlMetadata -Control $TxtAccountPassword -Name "Account password" -Description "Enter the password for this add-account action." -TabIndex 18
+    Set-ControlMetadata -Control $BtnAccountAdd -Name "Add account" -Description "Send the account credentials to JDownloader." -TabIndex 19
+    Set-ControlMetadata -Control $BtnAccountEnable -Name "Enable selected accounts" -Description "Enable the selected JDownloader accounts." -TabIndex 20
+    Set-ControlMetadata -Control $BtnAccountDisable -Name "Disable selected accounts" -Description "Disable the selected JDownloader accounts." -TabIndex 21
+    Set-ControlMetadata -Control $BtnAccountRemove -Name "Remove selected accounts" -Description "Remove the selected JDownloader accounts after confirmation." -TabIndex 22
 }
 
 # --- Themes Page ---
@@ -3954,7 +4126,7 @@ function Show-ConfirmationDialog {
 # 10. NAVIGATION & EXECUTION
 # ==========================================
 
-$pages = @{ $BtnDashboard = $PageDashboard; $BtnLiveControl = $PageLiveControl; $BtnInstallation = $PageInstallation; $BtnTheme = $PageTheme; $BtnBehavior = $PageBehavior; $BtnHardening = $PageHardening; $BtnRepair = $PageRepair }
+$pages = @{ $BtnDashboard = $PageDashboard; $BtnLiveControl = $PageLiveControl; $BtnAccounts = $PageAccounts; $BtnInstallation = $PageInstallation; $BtnTheme = $PageTheme; $BtnBehavior = $PageBehavior; $BtnHardening = $PageHardening; $BtnRepair = $PageRepair }
 $script:ActiveNavButton = $BtnDashboard
 
 function Update-NavigationState {
@@ -3994,6 +4166,9 @@ function Show-Page {
     if ($target -eq $PageLiveControl -and $script:LiveApiClient) {
         Refresh-LiveApiQueue
         Refresh-LiveCaptcha
+    }
+    if ($target -eq $PageAccounts) {
+        Refresh-Accounts
     }
 }
 
@@ -4140,6 +4315,11 @@ $BtnLiveAddLinks.Add_Click({ Send-LiveLinksToGrabber })
 $BtnLiveCaptchaSolve.Add_Click({ Submit-LiveCaptchaAnswer })
 $BtnLiveCaptchaSkip.Add_Click({ Skip-LiveCaptchaJob })
 $BtnLiveCaptchaRefresh.Add_Click({ Refresh-LiveCaptcha })
+$BtnAccountsRefresh.Add_Click({ Refresh-Accounts })
+$BtnAccountAdd.Add_Click({ Add-AccountFromControls })
+$BtnAccountEnable.Add_Click({ Set-SelectedAccountsEnabled -Enabled $true })
+$BtnAccountDisable.Add_Click({ Set-SelectedAccountsEnabled -Enabled $false })
+$BtnAccountRemove.Add_Click({ Remove-SelectedAccounts })
 $BtnRestoreWorkspace.Add_Click({
     if (-not $script:SavedWorkspaceState) { return }
     $shouldRestore = Show-ActionPrompt -Title "Restore last successful run" -Message "This replaces the current selections with the workspace that was last applied successfully." -ConfirmText "Restore selections" -ConfirmTag "PrimaryButton"
@@ -4186,6 +4366,7 @@ foreach ($entry in $pages.GetEnumerator()) {
 
 $ToolTip.SetToolTip($BtnDashboard, "Open the dashboard overview page.")
 $ToolTip.SetToolTip($BtnLiveControl, "Open live JDownloader queue and LinkGrabber controls.")
+$ToolTip.SetToolTip($BtnAccounts, "Open JDownloader premium account management.")
 $ToolTip.SetToolTip($BtnInstallation, "Open installation path and mode options.")
 $ToolTip.SetToolTip($BtnTheme, "Open themes, previews, and icon settings.")
 $ToolTip.SetToolTip($BtnBehavior, "Open download and tray behavior settings.")
@@ -4228,6 +4409,14 @@ $ToolTip.SetToolTip($TxtLiveCaptchaAnswer, "Enter the captcha answer shown by JD
 $ToolTip.SetToolTip($BtnLiveCaptchaSolve, "Submit the captcha answer to JDownloader.")
 $ToolTip.SetToolTip($BtnLiveCaptchaSkip, "Skip the current captcha job.")
 $ToolTip.SetToolTip($BtnLiveCaptchaRefresh, "Refresh pending captcha prompts.")
+$ToolTip.SetToolTip($AccountGrid, "Configured accounts are shown without passwords.")
+$ToolTip.SetToolTip($TxtAccountHoster, "Enter a JDownloader premium hoster identifier.")
+$ToolTip.SetToolTip($TxtAccountUsername, "Enter the hoster account username.")
+$ToolTip.SetToolTip($TxtAccountPassword, "Password is sent for this action and cleared after success.")
+$ToolTip.SetToolTip($BtnAccountAdd, "Add the hoster account to JDownloader.")
+$ToolTip.SetToolTip($BtnAccountEnable, "Enable selected accounts in JDownloader.")
+$ToolTip.SetToolTip($BtnAccountDisable, "Disable selected accounts in JDownloader.")
+$ToolTip.SetToolTip($BtnAccountRemove, "Remove selected accounts after confirmation.")
 
 
 $Form.Add_Load({

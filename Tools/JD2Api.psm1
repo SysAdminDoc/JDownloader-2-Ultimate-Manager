@@ -401,6 +401,64 @@ function Skip-JD2Captcha {
     return Invoke-JD2ApiMethod -Client $Client -Namespace "captcha" -Method "skip" -Parameters @($Id, $Type)
 }
 
+function Get-JD2Accounts {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [ValidateRange(1, 1000)][int]$MaxResults = 200
+    )
+    $query = [ordered]@{
+        startAt     = 0
+        maxResults  = $MaxResults
+        enabled     = $true
+        error       = $true
+        trafficLeft = $true
+        trafficMax  = $true
+        userName    = $true
+        valid       = $true
+        validUntil  = $true
+    }
+    return @(Invoke-JD2ApiMethod -Client $Client -Namespace "accountsV2" -Method "listAccounts" -Parameters @($query))
+}
+
+function Add-JD2Account {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][string]$PremiumHoster,
+        [Parameter(Mandatory)][string]$AccountUser,
+        [Parameter(Mandatory)][string]$AccountSecret
+    )
+    if ([string]::IsNullOrWhiteSpace($PremiumHoster)) { throw "Premium hoster cannot be empty." }
+    if ([string]::IsNullOrWhiteSpace($AccountUser)) { throw "Account username cannot be empty." }
+    if ([string]::IsNullOrWhiteSpace($AccountSecret)) { throw "Account password cannot be empty." }
+    return Invoke-JD2ApiMethod -Client $Client -Namespace "accountsV2" -Method "addAccount" -Parameters @($PremiumHoster.Trim(), $AccountUser.Trim(), $AccountSecret)
+}
+
+function Set-JD2AccountEnabled {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][long[]]$Ids,
+        [Parameter(Mandatory)][bool]$Enabled
+    )
+    if (-not $Ids -or $Ids.Count -eq 0) { throw "At least one account id is required." }
+    return Invoke-JD2ApiMethod -Client $Client -Namespace "accountsV2" -Method "setEnabledState" -Parameters @($Enabled, $Ids)
+}
+
+function Remove-JD2Accounts {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][long[]]$Ids
+    )
+    if (-not $Ids -or $Ids.Count -eq 0) { throw "At least one account id is required." }
+    if ($PSCmdlet.ShouldProcess(($Ids -join ","), "Remove JDownloader accounts")) {
+        return Invoke-JD2ApiMethod -Client $Client -Namespace "accountsV2" -Method "removeAccounts" -Parameters @($Ids)
+    }
+    return $false
+}
+
 Export-ModuleMember -Function @(
     "New-JD2ApiClient",
     "New-JD2ApiRequestUri",
@@ -415,5 +473,9 @@ Export-ModuleMember -Function @(
     "Get-JD2CaptchaImage",
     "Submit-JD2Captcha",
     "Skip-JD2Captcha",
+    "Get-JD2Accounts",
+    "Add-JD2Account",
+    "Set-JD2AccountEnabled",
+    "Remove-JD2Accounts",
     "Test-JD2ApiConnection"
 )

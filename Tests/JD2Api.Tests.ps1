@@ -94,4 +94,25 @@ Describe "JD2 API transport" {
         ($seen -join "`n") | Should -Match "captcha/solve"
         ($seen -join "`n") | Should -Match "captcha/skip"
     }
+
+    It "lists accounts and maps account mutations" {
+        $seen = New-Object System.Collections.Generic.List[string]
+        $invoker = {
+            param($uri)
+            [void]$seen.Add($uri)
+            if ($uri -match "accountsV2/listAccounts") { return '{"data":[{"uuid":7,"hostname":"example","username":"user","valid":true}]}' }
+            return '{"data":true}'
+        }.GetNewClosure()
+        $client = New-JD2ApiClient -RequestInvoker $invoker
+
+        $accounts = @(Get-JD2Accounts -Client $client)
+        $accounts.Count | Should -Be 1
+        $accounts[0].uuid | Should -Be 7
+        Add-JD2Account -Client $client -PremiumHoster "example" -AccountUser "user" -AccountSecret "secret" | Should -BeTrue
+        Set-JD2AccountEnabled -Client $client -Ids ([long[]](7)) -Enabled $false | Should -BeTrue
+        Remove-JD2Accounts -Client $client -Ids ([long[]](7)) -Confirm:$false | Should -BeTrue
+        ($seen -join "`n") | Should -Match "accountsV2/addAccount"
+        ($seen -join "`n") | Should -Match "accountsV2/setEnabledState"
+        ($seen -join "`n") | Should -Match "accountsV2/removeAccounts"
+    }
 }

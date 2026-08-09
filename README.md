@@ -63,6 +63,12 @@ Run this command in **PowerShell** to launch instantly:
 - Sends one or more pasted URLs directly to LinkGrabber without clipboard polling
 - Surfaces pending captcha prompts with the supplied image, answer, submit, and skip actions
 
+### 7. Account Manager
+- Lists premium hoster accounts already configured in JDownloader
+- Adds accounts and enables, disables, or removes selected accounts through the local API
+- Shows account validity and traffic information without persisting credentials in the manager
+- Leaves provider-specific OAuth consent in JDownloader's own external authorization flow
+
 ---
 
 ## System Requirements
@@ -112,6 +118,12 @@ Run this command in **PowerShell** to launch instantly:
 - Connect to the default `http://127.0.0.1:3128` endpoint or enter another HTTP endpoint
 - Refresh the queue, use controller actions, and send newline-separated links to LinkGrabber
 - When a captcha is waiting, enter the answer in the **Captcha attention** panel or skip it
+
+### Accounts
+- Open **Accounts** after connecting to the configured JDownloader endpoint
+- Review account validity, traffic, and enabled state
+- Enter a hoster, username, and password, then choose **Add account**; the password field is cleared after a successful request
+- Select one or more rows to enable, disable, or remove them
 
 ---
 
