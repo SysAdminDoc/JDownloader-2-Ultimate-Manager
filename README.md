@@ -22,6 +22,8 @@ Run this command in **PowerShell** to launch instantly:
 
     irm https://tinyurl.com/jdowntest | iex
 
+For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JDownloader2UltimateManager.msi` after compiling the current PowerShell script and bundling the required assets. The MSI installs a Start Menu shortcut and removes the manager's local settings during uninstall.
+
 ---
 
 ## Key Features

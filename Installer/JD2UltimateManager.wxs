@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+    Name="JDownloader 2 Ultimate Manager"
+    Manufacturer="SysAdminDoc"
+    Version="$(var.AppVersion)"
+    UpgradeCode="7D7B8E5E-9A70-4B10-8AC2-0B80AA1B1D35"
+    Scope="perMachine"
+    Compressed="yes">
+    <SummaryInformation Description="JDownloader 2 management workspace" />
+    <Icon Id="ApplicationIcon" SourceFile="$(var.SourceDir)\icon.ico" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of JDownloader 2 Ultimate Manager is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="JDownloader 2 Ultimate Manager" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentGroupRef Id="ToolsFiles" />
+      <ComponentGroupRef Id="TranslationFiles" />
+      <ComponentGroupRef Id="SoundFiles" />
+      <ComponentRef Id="UserDataCleanup" />
+    </Feature>
+
+    <SetProperty Id="JD2UM_USERDATA" Value="[LocalAppDataFolder]JD2-Ultimate-Manager" Before="RemoveFiles" Sequence="execute" />
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="JDownloader 2 Ultimate Manager">
+        <Directory Id="ToolsFolder" Name="Tools" />
+        <Directory Id="TranslationsFolder" Name="Translations" />
+        <Directory Id="SoundsFolder" Name="Sounds" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="JDownloader 2 Ultimate Manager" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Component Id="ApplicationExecutable" Guid="*">
+        <File Id="ManagerExecutable" Source="$(var.SourceDir)\JDownloader2UltimateManager.exe" KeyPath="yes">
+          <Shortcut
+            Id="StartMenuShortcut"
+            Directory="ApplicationProgramsFolder"
+            Name="JDownloader 2 Ultimate Manager"
+            WorkingDirectory="INSTALLFOLDER"
+            Advertise="yes"
+            Icon="ApplicationIcon" />
+        </File>
+      </Component>
+      <Component Id="RootBranding" Guid="EA7B80D7-0EE4-43DC-A25B-35BEE5C0DB1D">
+        <File Id="RootIcon" Source="$(var.SourceDir)\icon.ico" />
+        <File Id="RootPng" Source="$(var.SourceDir)\icon.png" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="ToolsFiles" Directory="ToolsFolder">
+      <Component Id="ApiModule" Guid="*">
+        <File Id="ApiModuleFile" Source="$(var.SourceDir)\Tools\JD2Api.psm1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="TranslationFiles" Directory="TranslationsFolder">
+      <Component Id="LanguageFile" Guid="*">
+        <File Id="LanguageFilePayload" Source="$(var.SourceDir)\Translations\lang.json" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="SoundFiles" Directory="SoundsFolder">
+      <Component Id="CaptchaSound" Guid="*">
+        <File Id="CaptchaSoundFile" Source="$(var.SourceDir)\Sounds\captcha.wav" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="UserDataCleanup" Guid="B44C5C0B-18DD-4DC2-88FB-78C9DCE6E0D1">
+        <CreateFolder />
+        <util:RemoveFolderEx On="uninstall" Property="JD2UM_USERDATA" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>
