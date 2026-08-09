@@ -163,6 +163,8 @@ $script:LiveApiClient = $null
 $script:LiveApiEndpoint = "http://127.0.0.1:3128"
 $script:LiveApiBusy = $false
 $script:LiveApiPollTimer = $null
+$script:LiveCaptchaJob = $null
+$script:LiveCaptchaBitmap = $null
 
 # ==========================================
 # 3. LANGUAGE & GUI THEME ENGINE
@@ -914,6 +916,10 @@ function Cleanup-Resources {
     }
     foreach ($img in $ThemeImageCache.Values) {
         if ($img) { try { $img.Dispose() } catch {} }
+    }
+    if ($LiveCaptchaImage -and $LiveCaptchaImage.Image) {
+        try { $LiveCaptchaImage.Image.Dispose() } catch {}
+        try { $LiveCaptchaImage.Image = $null } catch {}
     }
     $ThemeImageCache.Clear()
     $GlobalTimers.Clear()
@@ -2284,7 +2290,7 @@ $StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Wind
 $PageDashboard    = New-PagePanel -CanvasHeight 682; [void]$MainPanel.Controls.Add($PageDashboard)
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
-$PageLiveControl  = New-PagePanel -CanvasHeight 780; [void]$MainPanel.Controls.Add($PageLiveControl)
+$PageLiveControl  = New-PagePanel -CanvasHeight 1030; [void]$MainPanel.Controls.Add($PageLiveControl)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
 $PageBehavior     = New-PagePanel -CanvasHeight 740; [void]$MainPanel.Controls.Add($PageBehavior)
@@ -2466,6 +2472,130 @@ $LiveQueueGrid.RowTemplate.Height = 28
 [void]$LiveQueueGrid.Columns.Add("ETA", "ETA"); $LiveQueueGrid.Columns["ETA"].AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
 [void]$LiveQueueSurface.Controls.Add($LiveQueueGrid)
 
+$LiveCaptchaSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 778)) -Size (New-Object System.Drawing.Size(1040, 220)) -Tag "Callout"
+[void](New-Label -Parent $LiveCaptchaSurface -Text "Captcha attention" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+$LiveCaptchaBadge = New-Badge -Parent $LiveCaptchaSurface -Text "No pending captcha" -Location (New-Object System.Drawing.Point(780, 18)) -Size (New-Object System.Drawing.Size(196, 28)) -Tag "BadgeSuccess"
+$LiveCaptchaDetail = New-Label -Parent $LiveCaptchaSurface -Text "Captcha prompts from JDownloader appear here while the app stays in the tray." -Location (New-Object System.Drawing.Point(24, 50)) -Size (New-Object System.Drawing.Size(690, 22)) -AutoSize $false -Tag "BodyMuted"
+$LiveCaptchaImage = New-Object System.Windows.Forms.PictureBox
+$LiveCaptchaImage.Location = New-Object System.Drawing.Point(24, 82)
+$LiveCaptchaImage.Size = New-Object System.Drawing.Size(180, 118)
+$LiveCaptchaImage.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+$LiveCaptchaImage.BackColor = [System.Drawing.Color]::Transparent
+[void]$LiveCaptchaSurface.Controls.Add($LiveCaptchaImage)
+$LiveCaptchaHost = New-Label -Parent $LiveCaptchaSurface -Text "No captcha job is waiting." -Location (New-Object System.Drawing.Point(228, 84)) -Size (New-Object System.Drawing.Size(330, 22)) -AutoSize $false -Tag "MutedStrong"
+$LiveCaptchaExplanation = New-Label -Parent $LiveCaptchaSurface -Text "" -Location (New-Object System.Drawing.Point(228, 112)) -Size (New-Object System.Drawing.Size(330, 42)) -AutoSize $false -Tag "BodyMuted"
+$TxtLiveCaptchaAnswer = New-TextBox -Parent $LiveCaptchaSurface -Location (New-Object System.Drawing.Point(580, 84)) -Size (New-Object System.Drawing.Size(174, 34)) -Tag "Input"
+$BtnLiveCaptchaSolve = New-Button -Parent $LiveCaptchaSurface -Text "Submit answer" -Location (New-Object System.Drawing.Point(580, 128)) -Size (New-Object System.Drawing.Size(128, 32)) -Tag "PrimaryButton"
+$BtnLiveCaptchaSkip = New-Button -Parent $LiveCaptchaSurface -Text "Skip" -Location (New-Object System.Drawing.Point(718, 128)) -Size (New-Object System.Drawing.Size(82, 32)) -Tag "SecondaryButton"
+$BtnLiveCaptchaRefresh = New-Button -Parent $LiveCaptchaSurface -Text "Refresh" -Location (New-Object System.Drawing.Point(810, 128)) -Size (New-Object System.Drawing.Size(94, 32)) -Tag "SecondaryButton"
+
+function Clear-LiveCaptchaImage {
+    if (-not $LiveCaptchaImage) { return }
+    $oldImage = $LiveCaptchaImage.Image
+    $LiveCaptchaImage.Image = $null
+    if ($oldImage) { try { $oldImage.Dispose() } catch {} }
+    $script:LiveCaptchaBitmap = $null
+}
+
+function ConvertFrom-LiveCaptchaData {
+    param([string]$DataUrl)
+    if ([string]::IsNullOrWhiteSpace($DataUrl)) { return $null }
+    try {
+        $encoded = $DataUrl
+        if ($encoded -match ",") { $encoded = $encoded.Substring($encoded.IndexOf(",") + 1) }
+        $bytes = [Convert]::FromBase64String($encoded)
+        $stream = New-Object System.IO.MemoryStream(,$bytes)
+        $source = $null
+        try {
+            $source = [System.Drawing.Image]::FromStream($stream)
+            return New-Object System.Drawing.Bitmap($source)
+        } finally {
+            if ($source) { try { $source.Dispose() } catch {} }
+            try { $stream.Dispose() } catch {}
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Set-LiveCaptchaEmptyState {
+    Clear-LiveCaptchaImage
+    $script:LiveCaptchaJob = $null
+    $LiveCaptchaBadge.Text = "No pending captcha"
+    $LiveCaptchaBadge.Tag = "BadgeSuccess"
+    $LiveCaptchaHost.Text = "No captcha job is waiting."
+    $LiveCaptchaExplanation.Text = "Captcha prompts from JDownloader will appear here."
+    $LiveCaptchaDetail.Text = "Captcha prompts from JDownloader appear here while the app stays in the tray."
+    $TxtLiveCaptchaAnswer.Clear()
+    Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $LiveCaptchaBadge
+}
+
+function Refresh-LiveCaptcha {
+    if (-not $script:LiveApiClient -or $script:LiveApiBusy) { return }
+    try {
+        $jobs = @(Get-JD2CaptchaJobs -Client $script:LiveApiClient | Where-Object { $_ })
+        if ($jobs.Count -eq 0) {
+            Set-LiveCaptchaEmptyState
+            return
+        }
+
+        $job = $jobs[0]
+        $jobId = 0L
+        try { $jobId = [int64]$job.id } catch {}
+        if ($jobId -le 0) { throw "Captcha response did not include a valid job id." }
+        $script:LiveCaptchaJob = $job
+        $LiveCaptchaBadge.Text = "Needs attention"
+        $LiveCaptchaBadge.Tag = "BadgeWarning"
+        $LiveCaptchaHost.Text = "{0} captcha from {1}" -f ([string](Get-LiveLinkProperty -Link $job -Name "type" -Default "Unknown")), ([string](Get-LiveLinkProperty -Link $job -Name "hoster" -Default "JDownloader"))
+        $LiveCaptchaExplanation.Text = [string](Get-LiveLinkProperty -Link $job -Name "explain" -Default "Enter the characters shown in the image.")
+        $LiveCaptchaDetail.Text = "Captcha job {0} is waiting. Answer it here to resume the download." -f $jobId
+        $imageData = Get-JD2CaptchaImage -Client $script:LiveApiClient -Id $jobId
+        $image = ConvertFrom-LiveCaptchaData -DataUrl ([string]$imageData)
+        if ($image) {
+            Clear-LiveCaptchaImage
+            $LiveCaptchaImage.Image = $image
+            $script:LiveCaptchaBitmap = $image
+        }
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $LiveCaptchaBadge
+    } catch {
+        $LiveCaptchaBadge.Text = "Captcha unavailable"
+        $LiveCaptchaBadge.Tag = "BadgeNeutral"
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $LiveCaptchaBadge
+        Log-Status "Captcha polling failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Submit-LiveCaptchaAnswer {
+    if (-not $script:LiveApiClient -or -not $script:LiveCaptchaJob) { Refresh-LiveCaptcha; return }
+    $answer = $TxtLiveCaptchaAnswer.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        Log-Status "Enter the captcha answer before submitting." "WARN"
+        return
+    }
+    try {
+        $jobId = [int64]$script:LiveCaptchaJob.id
+        Submit-JD2Captcha -Client $script:LiveApiClient -Id $jobId -Result $answer | Out-Null
+        Log-Status "Captcha answer submitted." "SUCCESS"
+        Set-LiveCaptchaEmptyState
+        Refresh-LiveCaptcha
+    } catch {
+        Log-Status "Captcha answer failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Skip-LiveCaptchaJob {
+    if (-not $script:LiveApiClient -or -not $script:LiveCaptchaJob) { Refresh-LiveCaptcha; return }
+    try {
+        $jobId = [int64]$script:LiveCaptchaJob.id
+        Skip-JD2Captcha -Client $script:LiveApiClient -Id $jobId | Out-Null
+        Log-Status "Captcha job skipped." "INFO"
+        Set-LiveCaptchaEmptyState
+        Refresh-LiveCaptcha
+    } catch {
+        Log-Status "Captcha skip failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
 function Get-LiveLinkProperty {
     param($Link, [string]$Name, $Default = "")
     if (-not $Link -or [string]::IsNullOrWhiteSpace($Name)) { return $Default }
@@ -2599,6 +2729,7 @@ $script:LiveApiPollTimer.Interval = 5000
 $script:LiveApiPollTimer.Add_Tick({
     if ($PageLiveControl.Visible -and $script:LiveApiClient -and -not $script:LiveApiBusy) {
         Refresh-LiveApiQueue
+        Refresh-LiveCaptcha
     }
 })
 [void]$GlobalTimers.Add($script:LiveApiPollTimer)
@@ -3191,6 +3322,10 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $TxtLivePackage -Name "LinkGrabber package name" -Description "Optional package name for the links sent to LinkGrabber." -TabIndex 8
     Set-ControlMetadata -Control $BtnLiveAddLinks -Name "Send links to LinkGrabber" -Description "Forward the pasted URLs to JDownloader LinkGrabber." -TabIndex 9
     Set-ControlMetadata -Control $LiveQueueGrid -Name "JDownloader download queue" -Description "Shows current links, status, progress, speed, and estimated time." -TabIndex 10
+    Set-ControlMetadata -Control $TxtLiveCaptchaAnswer -Name "Captcha answer" -Description "Enter the answer for the pending JDownloader captcha prompt." -TabIndex 11
+    Set-ControlMetadata -Control $BtnLiveCaptchaSolve -Name "Submit captcha answer" -Description "Submit the captcha answer to JDownloader." -TabIndex 12
+    Set-ControlMetadata -Control $BtnLiveCaptchaSkip -Name "Skip captcha" -Description "Skip the current JDownloader captcha prompt." -TabIndex 13
+    Set-ControlMetadata -Control $BtnLiveCaptchaRefresh -Name "Refresh captcha prompts" -Description "Refresh the pending JDownloader captcha prompt." -TabIndex 14
 }
 
 # --- Themes Page ---
@@ -3858,6 +3993,7 @@ function Show-Page {
     }
     if ($target -eq $PageLiveControl -and $script:LiveApiClient) {
         Refresh-LiveApiQueue
+        Refresh-LiveCaptcha
     }
 }
 
@@ -3991,8 +4127,8 @@ $ChkPreserveDate.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceSt
 $ChkClipboard.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
 $ChkDisableAPI.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
 $ChkVmOptions.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
-$BtnLiveConnect.Add_Click({ Refresh-LiveApiQueue })
-$BtnLiveRefresh.Add_Click({ Refresh-LiveApiQueue })
+$BtnLiveConnect.Add_Click({ Refresh-LiveApiQueue; Refresh-LiveCaptcha })
+$BtnLiveRefresh.Add_Click({ Refresh-LiveApiQueue; Refresh-LiveCaptcha })
 $BtnLiveStart.Add_Click({ Invoke-LiveApiAction -Action "Start" })
 $BtnLivePause.Add_Click({ Invoke-LiveApiAction -Action "Pause" })
 $BtnLiveStop.Add_Click({ Invoke-LiveApiAction -Action "Stop" })
@@ -4001,6 +4137,9 @@ $BtnLiveGrabberRefresh.Add_Click({
     if ($script:LiveApiClient) { Refresh-LiveLinkGrabber }
 })
 $BtnLiveAddLinks.Add_Click({ Send-LiveLinksToGrabber })
+$BtnLiveCaptchaSolve.Add_Click({ Submit-LiveCaptchaAnswer })
+$BtnLiveCaptchaSkip.Add_Click({ Skip-LiveCaptchaJob })
+$BtnLiveCaptchaRefresh.Add_Click({ Refresh-LiveCaptcha })
 $BtnRestoreWorkspace.Add_Click({
     if (-not $script:SavedWorkspaceState) { return }
     $shouldRestore = Show-ActionPrompt -Title "Restore last successful run" -Message "This replaces the current selections with the workspace that was last applied successfully." -ConfirmText "Restore selections" -ConfirmTag "PrimaryButton"
@@ -4084,6 +4223,11 @@ $ToolTip.SetToolTip($BtnLivePause, "Pause the JDownloader download controller.")
 $ToolTip.SetToolTip($BtnLiveStop, "Stop the JDownloader download controller.")
 $ToolTip.SetToolTip($TxtLiveLinks, "Paste one or more HTTP, HTTPS, FTP, magnet, file, or jdlist links.")
 $ToolTip.SetToolTip($BtnLiveAddLinks, "Send pasted URLs to LinkGrabber.")
+$ToolTip.SetToolTip($LiveCaptchaImage, "Captcha image supplied by JDownloader.")
+$ToolTip.SetToolTip($TxtLiveCaptchaAnswer, "Enter the captcha answer shown by JDownloader.")
+$ToolTip.SetToolTip($BtnLiveCaptchaSolve, "Submit the captcha answer to JDownloader.")
+$ToolTip.SetToolTip($BtnLiveCaptchaSkip, "Skip the current captcha job.")
+$ToolTip.SetToolTip($BtnLiveCaptchaRefresh, "Refresh pending captcha prompts.")
 
 
 $Form.Add_Load({

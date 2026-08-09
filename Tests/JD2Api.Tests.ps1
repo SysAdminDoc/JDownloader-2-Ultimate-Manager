@@ -73,4 +73,25 @@ Describe "JD2 API transport" {
         { Add-JD2Links -Client $client -Links @(" ") } | Should -Throw "At least one download link is required."
         { Add-JD2Links -Client $client -Links @("not-a-url") } | Should -Throw "Unsupported link format: not-a-url"
     }
+
+    It "supports captcha polling, image retrieval, solving, and skipping" {
+        $seen = New-Object System.Collections.Generic.List[string]
+        $invoker = {
+            param($uri)
+            [void]$seen.Add($uri)
+            if ($uri -match "/captcha/list") { return '{"data":[{"id":42,"hoster":"example","type":"text"}]}' }
+            if ($uri -match "/captcha/get") { return '{"data":"data:image/png;base64,AAAA"}' }
+            return '{"data":true}'
+        }.GetNewClosure()
+        $client = New-JD2ApiClient -RequestInvoker $invoker
+
+        $jobs = @(Get-JD2CaptchaJobs -Client $client)
+        $jobs.Count | Should -Be 1
+        $jobs[0].id | Should -Be 42
+        Get-JD2CaptchaImage -Client $client -Id 42 | Should -Be "data:image/png;base64,AAAA"
+        Submit-JD2Captcha -Client $client -Id 42 -Result "answer" | Should -BeTrue
+        Skip-JD2Captcha -Client $client -Id 42 | Should -BeTrue
+        ($seen -join "`n") | Should -Match "captcha/solve"
+        ($seen -join "`n") | Should -Match "captcha/skip"
+    }
 }

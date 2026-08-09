@@ -361,6 +361,46 @@ function Test-JD2ApiConnection {
     }
 }
 
+function Get-JD2CaptchaJobs {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Client)
+    return @(Invoke-JD2ApiMethod -Client $Client -Namespace "captcha" -Method "list")
+}
+
+function Get-JD2CaptchaImage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][long]$Id
+    )
+    return Invoke-JD2ApiMethod -Client $Client -Namespace "captcha" -Method "get" -Parameters @($Id)
+}
+
+function Submit-JD2Captcha {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][long]$Id,
+        [Parameter(Mandatory)][string]$Result,
+        [string]$ResultFormat = "text"
+    )
+    if ([string]::IsNullOrWhiteSpace($Result)) {
+        throw "Captcha answer cannot be empty."
+    }
+    return Invoke-JD2ApiMethod -Client $Client -Namespace "captcha" -Method "solve" -Parameters @($Id, $Result, $ResultFormat)
+}
+
+function Skip-JD2Captcha {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][long]$Id,
+        [ValidateSet("SINGLE", "BLOCK_HOSTER", "BLOCK_ALL_CAPTCHAS", "BLOCK_PACKAGE", "REFRESH", "STOP_CURRENT_ACTION", "TIMEOUT")]
+        [string]$Type = "SINGLE"
+    )
+    return Invoke-JD2ApiMethod -Client $Client -Namespace "captcha" -Method "skip" -Parameters @($Id, $Type)
+}
+
 Export-ModuleMember -Function @(
     "New-JD2ApiClient",
     "New-JD2ApiRequestUri",
@@ -371,5 +411,9 @@ Export-ModuleMember -Function @(
     "Stop-JD2Downloads",
     "Set-JD2DownloadsPaused",
     "Add-JD2Links",
+    "Get-JD2CaptchaJobs",
+    "Get-JD2CaptchaImage",
+    "Submit-JD2Captcha",
+    "Skip-JD2Captcha",
     "Test-JD2ApiConnection"
 )

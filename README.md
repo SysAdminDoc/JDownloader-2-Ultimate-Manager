@@ -61,6 +61,7 @@ Run this command in **PowerShell** to launch instantly:
 - Displays the live download queue with status, progress, speed, and ETA
 - Starts, pauses, or stops the download controller without opening JDownloader's main window
 - Sends one or more pasted URLs directly to LinkGrabber without clipboard polling
+- Surfaces pending captcha prompts with the supplied image, answer, submit, and skip actions
 
 ---
 
@@ -110,6 +111,7 @@ Run this command in **PowerShell** to launch instantly:
 - Enable JDownloader's deprecated local API in Advanced Settings, then open **Live Control**
 - Connect to the default `http://127.0.0.1:3128` endpoint or enter another HTTP endpoint
 - Refresh the queue, use controller actions, and send newline-separated links to LinkGrabber
+- When a captcha is waiting, enter the answer in the **Captcha attention** panel or skip it
 
 ---
 
