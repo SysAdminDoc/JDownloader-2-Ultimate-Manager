@@ -41,6 +41,16 @@ $script:PortableMode = [bool]$Portable
 $script:SilentMode = [bool]$Silent
 $script:PresetPath = if ([string]::IsNullOrWhiteSpace($Preset)) { $null } else { $Preset }
 $script:ExportPresetPath = if ([string]::IsNullOrWhiteSpace($ExportPreset)) { $null } else { $ExportPreset }
+$script:ApiModulePath = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'Tools\JD2Api.psm1' } else { $null }
+$script:ApiModuleLoaded = $false
+if ($script:ApiModulePath -and (Test-Path -LiteralPath $script:ApiModulePath)) {
+    try {
+        Import-Module -Name $script:ApiModulePath -Force -ErrorAction Stop
+        $script:ApiModuleLoaded = $true
+    } catch {
+        $script:ApiModuleLoadError = $_.Exception.Message
+    }
+}
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -149,6 +159,10 @@ $script:InitialWorkspaceState = $null
 $script:SavedWorkspaceState = $null
 $script:IsBootstrapping = $true
 $script:ApplyInFlight = $false
+$script:LiveApiClient = $null
+$script:LiveApiEndpoint = "http://127.0.0.1:3128"
+$script:LiveApiBusy = $false
+$script:LiveApiPollTimer = $null
 
 # ==========================================
 # 3. LANGUAGE & GUI THEME ENGINE
@@ -157,7 +171,7 @@ $script:ApplyInFlight = $false
 # --- Default English Fallback ---
 $DefaultLang = [ordered]@{
     "Title" = $script:AppTitle;
-    "Dashboard" = "Dashboard"; "Installation" = "Installation"; "Themes" = "Themes"; 
+    "Dashboard" = "Dashboard"; "LiveControl" = "Live Control"; "Installation" = "Installation"; "Themes" = "Themes";
     "Behavior" = "Behavior"; "Hardening" = "Hardening"; "Repair" = "Repair Tools";
     "Execute" = "Apply Workspace"; "Status" = "Status: Ready";
     "Running" = "Applying workspace...";
@@ -1041,6 +1055,18 @@ function Apply-GuiTheme {
                 "BadgeWarning" { $ctrl.BackColor = if ($isLightPalette) { [System.Windows.Forms.ControlPaint]::Light($pal.Warning, 0.84) } else { [System.Windows.Forms.ControlPaint]::Dark($pal.Warning, 0.76) }; $ctrl.ForeColor = if ($isLightPalette) { [System.Windows.Forms.ControlPaint]::Dark($pal.Warning, 0.45) } else { [System.Windows.Forms.ControlPaint]::Light($pal.Warning, 0.1) }; $styled=$true }
                 "BadgeDanger" { $ctrl.BackColor = if ($isLightPalette) { [System.Windows.Forms.ControlPaint]::Light($pal.Danger, 0.85) } else { [System.Windows.Forms.ControlPaint]::Dark($pal.Danger, 0.76) }; $ctrl.ForeColor = if ($isLightPalette) { [System.Windows.Forms.ControlPaint]::Dark($pal.Danger, 0.4) } else { [System.Windows.Forms.ControlPaint]::Light($pal.Danger, 0.1) }; $styled=$true }
                 "NavIndicator" { $ctrl.BackColor = $pal.Accent; $styled=$true }
+                "QueueGrid" {
+                    $ctrl.BackgroundColor = $pal.InputBack
+                    $ctrl.GridColor = $pal.Border
+                    $ctrl.ForeColor = $pal.Fore
+                    $ctrl.ColumnHeadersDefaultCellStyle.BackColor = $pal.SurfaceAlt
+                    $ctrl.ColumnHeadersDefaultCellStyle.ForeColor = $pal.Fore
+                    $ctrl.DefaultCellStyle.BackColor = $pal.InputBack
+                    $ctrl.DefaultCellStyle.ForeColor = $pal.Fore
+                    $ctrl.DefaultCellStyle.SelectionBackColor = $pal.AccentSoft
+                    $ctrl.DefaultCellStyle.SelectionForeColor = $pal.Fore
+                    $styled=$true
+                }
             }
         }
 
@@ -2214,6 +2240,8 @@ $SidebarNote = New-Surface -Parent $SidebarFooter -Location (New-Object System.D
 [int]$sbGap = 8
 $BtnDashboard    = New-Button -Parent $Sidebar -LangKey "Dashboard"    -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
 $sbY += $sbH + $sbGap
+$BtnLiveControl  = New-Button -Parent $Sidebar -LangKey "LiveControl"  -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$sbY += $sbH + $sbGap
 $BtnInstallation = New-Button -Parent $Sidebar -LangKey "Installation" -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
 $sbY += $sbH + $sbGap
 $BtnTheme        = New-Button -Parent $Sidebar -LangKey "Themes"       -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
@@ -2226,6 +2254,7 @@ $BtnRepair       = New-Button -Parent $Sidebar -LangKey "Repair"       -Location
 
 $script:NavIndicators = @{
     $BtnDashboard    = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnDashboard.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
+    $BtnLiveControl  = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnLiveControl.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
     $BtnInstallation = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnInstallation.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
     $BtnTheme        = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnTheme.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
     $BtnBehavior     = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnBehavior.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
@@ -2255,6 +2284,7 @@ $StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Wind
 $PageDashboard    = New-PagePanel -CanvasHeight 682; [void]$MainPanel.Controls.Add($PageDashboard)
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
+$PageLiveControl  = New-PagePanel -CanvasHeight 780; [void]$MainPanel.Controls.Add($PageLiveControl)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
 $PageBehavior     = New-PagePanel -CanvasHeight 740; [void]$MainPanel.Controls.Add($PageBehavior)
@@ -2262,6 +2292,7 @@ $PageHardening    = New-PagePanel -CanvasHeight 780; [void]$MainPanel.Controls.A
 $PageRepair       = New-PagePanel -CanvasHeight 572; [void]$MainPanel.Controls.Add($PageRepair)
 
 $DashboardCanvas = Get-PageCanvas $PageDashboard
+$LiveControlCanvas = Get-PageCanvas $PageLiveControl
 $InstallationCanvas = Get-PageCanvas $PageInstallation
 $ThemeCanvas = Get-PageCanvas $PageTheme
 $BehaviorCanvas = Get-PageCanvas $PageBehavior
@@ -2376,6 +2407,201 @@ function Layout-Dashboard {
     $BtnRestoreWorkspace.Location = New-Object System.Drawing.Point(18, 112)
     $BtnRestoreWorkspace.Size = New-Object System.Drawing.Size(170, 28)
 }
+
+# --- Live Control Page ---
+$LiveHero = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 136))
+[void](New-Label -Parent $LiveHero -Text "LIVE CONTROL" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
+[void](New-Label -Parent $LiveHero -Text "Control JDownloader from one queue view" -Location (New-Object System.Drawing.Point(24, 44)) -Font (New-Object System.Drawing.Font("Segoe UI", 22, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(640, 38)) -AutoSize $false)
+[void](New-Label -Parent $LiveHero -Text "Connect to the local JSON API, inspect active downloads, start or pause the controller, and send links to LinkGrabber." -Location (New-Object System.Drawing.Point(24, 88)) -Size (New-Object System.Drawing.Size(670, 28)) -AutoSize $false -Tag "SubHeader")
+$LiveHeroBadge = New-Badge -Parent $LiveHero -Text "Not connected" -Location (New-Object System.Drawing.Point(812, 26)) -Size (New-Object System.Drawing.Size(164, 30)) -Tag "BadgeNeutral"
+[void](New-Label -Parent $LiveHero -Text "The endpoint stays local by default." -Location (New-Object System.Drawing.Point(782, 68)) -Size (New-Object System.Drawing.Size(210, 38)) -AutoSize $false -Tag "BodyMuted")
+
+$LiveConnectionSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 154)) -Size (New-Object System.Drawing.Size(1040, 122)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $LiveConnectionSurface -Text "JDownloader API connection" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $LiveConnectionSurface -Text "Enable JDownloader's deprecated local API in Advanced Settings before connecting." -Location (New-Object System.Drawing.Point(24, 44)) -Size (New-Object System.Drawing.Size(560, 18)) -AutoSize $false -Tag "BodyMuted")
+$TxtLiveEndpoint = New-TextBox -Parent $LiveConnectionSurface -Location (New-Object System.Drawing.Point(24, 70)) -Size (New-Object System.Drawing.Size(500, 34)) -Text $script:LiveApiEndpoint -Tag "Input"
+$BtnLiveConnect = New-Button -Parent $LiveConnectionSurface -Text "Connect" -Location (New-Object System.Drawing.Point(540, 70)) -Size (New-Object System.Drawing.Size(108, 34)) -Tag "PrimaryButton"
+$BtnLiveRefresh = New-Button -Parent $LiveConnectionSurface -Text "Refresh queue" -Location (New-Object System.Drawing.Point(660, 70)) -Size (New-Object System.Drawing.Size(132, 34)) -Tag "SecondaryButton"
+$LiveConnectionBadge = New-Badge -Parent $LiveConnectionSurface -Text "Offline" -Location (New-Object System.Drawing.Point(812, 72)) -Size (New-Object System.Drawing.Size(112, 28)) -Tag "BadgeNeutral"
+$LiveConnectionDetail = New-Label -Parent $LiveConnectionSurface -Text "No request made yet." -Location (New-Object System.Drawing.Point(812, 100)) -Size (New-Object System.Drawing.Size(194, 18)) -AutoSize $false -Tag "BodyMuted"
+
+$LiveActionSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 294)) -Size (New-Object System.Drawing.Size(1040, 166))
+[void](New-Label -Parent $LiveActionSurface -Text "Controller actions and LinkGrabber" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+$BtnLiveStart = New-Button -Parent $LiveActionSurface -Text "Start downloads" -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(142, 34)) -Tag "SuccessButton"
+$BtnLivePause = New-Button -Parent $LiveActionSurface -Text "Pause downloads" -Location (New-Object System.Drawing.Point(178, 52)) -Size (New-Object System.Drawing.Size(142, 34)) -Tag "SecondaryButton"
+$BtnLiveStop = New-Button -Parent $LiveActionSurface -Text "Stop downloads" -Location (New-Object System.Drawing.Point(332, 52)) -Size (New-Object System.Drawing.Size(142, 34)) -Tag "DangerButton"
+$BtnLiveGrabberRefresh = New-Button -Parent $LiveActionSurface -Text "Refresh LinkGrabber" -Location (New-Object System.Drawing.Point(488, 52)) -Size (New-Object System.Drawing.Size(166, 34)) -Tag "SecondaryButton"
+$LiveLinkGrabberSummary = New-Label -Parent $LiveActionSurface -Text "LinkGrabber: not queried" -Location (New-Object System.Drawing.Point(680, 58)) -Size (New-Object System.Drawing.Size(326, 22)) -AutoSize $false -Tag "MutedStrong"
+[void](New-Label -Parent $LiveActionSurface -Text "Paste one or more URLs below. They are forwarded to JDownloader's LinkGrabber instead of using the clipboard." -Location (New-Object System.Drawing.Point(24, 100)) -Size (New-Object System.Drawing.Size(680, 20)) -AutoSize $false -Tag "BodyMuted")
+$TxtLiveLinks = New-TextBox -Parent $LiveActionSurface -Location (New-Object System.Drawing.Point(24, 124)) -Size (New-Object System.Drawing.Size(700, 30)) -Tag "Input"
+$TxtLiveLinks.Multiline = $true
+$TxtLiveLinks.ScrollBars = "Vertical"
+$TxtLiveLinks.AcceptsReturn = $true
+[void](New-Label -Parent $LiveActionSurface -Text "Package name" -Location (New-Object System.Drawing.Point(748, 100)) -Size (New-Object System.Drawing.Size(120, 20)) -AutoSize $false -Tag "BodyMuted")
+$TxtLivePackage = New-TextBox -Parent $LiveActionSurface -Location (New-Object System.Drawing.Point(748, 124)) -Size (New-Object System.Drawing.Size(152, 30)) -Tag "Input"
+$BtnLiveAddLinks = New-Button -Parent $LiveActionSurface -Text "Send to LinkGrabber" -Location (New-Object System.Drawing.Point(912, 124)) -Size (New-Object System.Drawing.Size(104, 30)) -Tag "PrimaryButton"
+
+$LiveQueueSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 478)) -Size (New-Object System.Drawing.Size(1040, 282)) -Tag "Surface"
+[void](New-Label -Parent $LiveQueueSurface -Text "Download queue" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+$LiveQueueSummary = New-Label -Parent $LiveQueueSurface -Text "Connect to load the current queue." -Location (New-Object System.Drawing.Point(180, 22)) -Size (New-Object System.Drawing.Size(820, 20)) -AutoSize $false -Tag "MutedStrong"
+$LiveQueueGrid = New-Object System.Windows.Forms.DataGridView
+$LiveQueueGrid.Location = New-Object System.Drawing.Point(24, 52)
+$LiveQueueGrid.Size = New-Object System.Drawing.Size(992, 208)
+$LiveQueueGrid.Tag = "QueueGrid"
+$LiveQueueGrid.ReadOnly = $true
+$LiveQueueGrid.AllowUserToAddRows = $false
+$LiveQueueGrid.AllowUserToDeleteRows = $false
+$LiveQueueGrid.AllowUserToResizeRows = $false
+$LiveQueueGrid.AutoGenerateColumns = $false
+$LiveQueueGrid.RowHeadersVisible = $false
+$LiveQueueGrid.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+$LiveQueueGrid.MultiSelect = $false
+$LiveQueueGrid.AutoSizeRowsMode = [System.Windows.Forms.DataGridViewAutoSizeRowsMode]::None
+$LiveQueueGrid.RowTemplate.Height = 28
+[void]$LiveQueueGrid.Columns.Add("Name", "Name"); $LiveQueueGrid.Columns["Name"].Width = 330
+[void]$LiveQueueGrid.Columns.Add("Host", "Host"); $LiveQueueGrid.Columns["Host"].Width = 150
+[void]$LiveQueueGrid.Columns.Add("Status", "Status"); $LiveQueueGrid.Columns["Status"].Width = 168
+[void]$LiveQueueGrid.Columns.Add("Progress", "Progress"); $LiveQueueGrid.Columns["Progress"].Width = 112
+[void]$LiveQueueGrid.Columns.Add("Speed", "Speed"); $LiveQueueGrid.Columns["Speed"].Width = 112
+[void]$LiveQueueGrid.Columns.Add("ETA", "ETA"); $LiveQueueGrid.Columns["ETA"].AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
+[void]$LiveQueueSurface.Controls.Add($LiveQueueGrid)
+
+function Get-LiveLinkProperty {
+    param($Link, [string]$Name, $Default = "")
+    if (-not $Link -or [string]::IsNullOrWhiteSpace($Name)) { return $Default }
+    try {
+        if ($Link.PSObject.Properties.Name -contains $Name) { return $Link.$Name }
+    } catch {}
+    return $Default
+}
+
+function Format-LiveBytes {
+    param($Bytes)
+    $value = 0.0
+    try { $value = [double]$Bytes } catch {}
+    if ($value -ge 1TB) { return "{0:N1} TB" -f ($value / 1TB) }
+    if ($value -ge 1GB) { return "{0:N1} GB" -f ($value / 1GB) }
+    if ($value -ge 1MB) { return "{0:N1} MB" -f ($value / 1MB) }
+    if ($value -ge 1KB) { return "{0:N1} KB" -f ($value / 1KB) }
+    return "{0:N0} B" -f $value
+}
+
+function Update-LiveQueueGrid {
+    param($Queue)
+    if (-not $LiveQueueGrid -or -not $Queue) { return }
+    try { $LiveQueueGrid.Rows.Clear() } catch { return }
+    foreach ($link in @($Queue.Links)) {
+        $loaded = Get-LiveLinkProperty -Link $link -Name "bytesLoaded" -Default 0
+        $total = Get-LiveLinkProperty -Link $link -Name "bytesTotal" -Default 0
+        $percent = if ([double]$total -gt 0) { "{0:N0}%" -f (([double]$loaded / [double]$total) * 100) } else { "-" }
+        $status = [string](Get-LiveLinkProperty -Link $link -Name "status" -Default "")
+        if ([string]::IsNullOrWhiteSpace($status)) {
+            if (ConvertTo-SafeBool (Get-LiveLinkProperty -Link $link -Name "finished" -Default $false)) { $status = "Finished" }
+            elseif (ConvertTo-SafeBool (Get-LiveLinkProperty -Link $link -Name "running" -Default $false)) { $status = "Downloading" }
+            else { $status = "Queued" }
+        }
+        $rowIndex = $LiveQueueGrid.Rows.Add()
+        $row = $LiveQueueGrid.Rows[$rowIndex]
+        $row.Cells["Name"].Value = [string](Get-LiveLinkProperty -Link $link -Name "name" -Default "Unnamed link")
+        $row.Cells["Host"].Value = [string](Get-LiveLinkProperty -Link $link -Name "host" -Default "")
+        $row.Cells["Status"].Value = $status
+        $row.Cells["Progress"].Value = "{0} / {1}" -f $percent, (Format-LiveBytes $total)
+        $row.Cells["Speed"].Value = "{0}/s" -f (Format-LiveBytes (Get-LiveLinkProperty -Link $link -Name "speed" -Default 0))
+        $eta = Get-LiveLinkProperty -Link $link -Name "eta" -Default -1
+        $row.Cells["ETA"].Value = if ([int64]$eta -gt 0) { "{0:N0}s" -f ([double]$eta / 1000) } else { "-" }
+    }
+    $LiveQueueSummary.Text = "{0} link(s), {1} active, {2} finished, {3}/s" -f $Queue.TotalLinks, $Queue.ActiveLinks, $Queue.FinishedLinks, (Format-LiveBytes $Queue.SpeedBps)
+}
+
+function New-LiveApiClientFromControls {
+    if (-not $script:ApiModuleLoaded) {
+        throw "The JD2 API module could not be loaded."
+    }
+    $endpoint = $TxtLiveEndpoint.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($endpoint)) { throw "Enter a JDownloader API endpoint first." }
+    if ($endpoint -notmatch "^(?i)https?://") { throw "The JDownloader API endpoint must start with http:// or https://." }
+    $script:LiveApiEndpoint = $endpoint.TrimEnd("/")
+    return New-JD2ApiClient -BaseUrl $script:LiveApiEndpoint -Mode "Local" -TimeoutSec 5
+}
+
+function Refresh-LiveLinkGrabber {
+    if (-not $script:LiveApiClient -or $script:LiveApiBusy) { return }
+    try {
+        $grabber = Get-JD2LinkGrabberQueue -Client $script:LiveApiClient
+        $LiveLinkGrabberSummary.Text = "LinkGrabber: {0} package(s), {1} link(s)" -f $grabber.TotalPackages, $grabber.TotalLinks
+    } catch {
+        $LiveLinkGrabberSummary.Text = "LinkGrabber: unavailable"
+    }
+}
+
+function Refresh-LiveApiQueue {
+    if ($script:LiveApiBusy) { return }
+    $script:LiveApiBusy = $true
+    try {
+        if (-not $script:LiveApiClient -or $TxtLiveEndpoint.Text.TrimEnd("/") -ne $script:LiveApiEndpoint) {
+            $script:LiveApiClient = New-LiveApiClientFromControls
+        }
+        $queue = Get-JD2Queue -Client $script:LiveApiClient
+        Update-LiveQueueGrid -Queue $queue
+        $LiveHeroBadge.Text = "Connected"
+        $LiveHeroBadge.Tag = "BadgeSuccess"
+        $LiveConnectionBadge.Text = "Online"
+        $LiveConnectionBadge.Tag = "BadgeSuccess"
+        $LiveConnectionDetail.Text = "Updated {0}" -f (Get-Date).ToString("HH:mm:ss")
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $LiveHeroBadge
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $LiveConnectionBadge
+        Log-Status "Live queue refreshed." "SUCCESS"
+    } catch {
+        $LiveHeroBadge.Text = "Not connected"
+        $LiveHeroBadge.Tag = "BadgeNeutral"
+        $LiveConnectionBadge.Text = "Offline"
+        $LiveConnectionBadge.Tag = "BadgeDanger"
+        $LiveConnectionDetail.Text = "Connection failed."
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $LiveHeroBadge
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $LiveConnectionBadge
+        Log-Status "Live API request failed: $($_.Exception.Message)" "WARN"
+    } finally {
+        $script:LiveApiBusy = $false
+    }
+}
+
+function Invoke-LiveApiAction {
+    param([ValidateSet("Start", "Pause", "Stop")][string]$Action)
+    if (-not $script:LiveApiClient) { Refresh-LiveApiQueue }
+    if (-not $script:LiveApiClient) { return }
+    try {
+        switch ($Action) {
+            "Start" { Start-JD2Downloads -Client $script:LiveApiClient | Out-Null; Log-Status "JDownloader downloads started." "SUCCESS" }
+            "Pause" { Set-JD2DownloadsPaused -Client $script:LiveApiClient -Paused $true | Out-Null; Log-Status "JDownloader downloads paused." "SUCCESS" }
+            "Stop"  { Stop-JD2Downloads -Client $script:LiveApiClient | Out-Null; Log-Status "JDownloader download controller stopped." "SUCCESS" }
+        }
+        Refresh-LiveApiQueue
+    } catch {
+        Log-Status "Live API action failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Send-LiveLinksToGrabber {
+    if (-not $script:LiveApiClient) { Refresh-LiveApiQueue }
+    if (-not $script:LiveApiClient) { return }
+    try {
+        Add-JD2Links -Client $script:LiveApiClient -Links @($TxtLiveLinks.Text) -PackageName $TxtLivePackage.Text | Out-Null
+        $TxtLiveLinks.Clear()
+        Log-Status "Links sent to JDownloader LinkGrabber." "SUCCESS"
+        Refresh-LiveLinkGrabber
+    } catch {
+        Log-Status "LinkGrabber request failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+$script:LiveApiPollTimer = New-Object System.Windows.Forms.Timer
+$script:LiveApiPollTimer.Interval = 5000
+$script:LiveApiPollTimer.Add_Tick({
+    if ($PageLiveControl.Visible -and $script:LiveApiClient -and -not $script:LiveApiBusy) {
+        Refresh-LiveApiQueue
+    }
+})
+[void]$GlobalTimers.Add($script:LiveApiPollTimer)
 
 # --- Installation Page ---
 $InstallHero = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 160))
@@ -2893,6 +3119,7 @@ function Test-WorkspaceHasPendingChanges {
 
 function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $BtnDashboard    -Name "Dashboard navigation"    -Description "Open the dashboard overview page." -TabIndex 0
+    Set-ControlMetadata -Control $BtnLiveControl  -Name "Live control navigation"  -Description "Open the live JDownloader queue and LinkGrabber controls." -TabIndex 1
     Set-ControlMetadata -Control $BtnInstallation -Name "Installation navigation" -Description "Open installation mode and path settings." -TabIndex 1
     Set-ControlMetadata -Control $BtnTheme        -Name "Themes navigation"       -Description "Open theme and icon customization options." -TabIndex 2
     Set-ControlMetadata -Control $BtnBehavior     -Name "Behavior navigation"     -Description "Open download and window behavior settings." -TabIndex 3
@@ -2953,6 +3180,17 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $ThemePreviewBadge -Name "Theme preview status" -Description "Shows whether the selected theme preview is ready, loading, or unavailable."
     Set-ControlMetadata -Control $BehProfileBadge -Name "Behavior profile summary" -Description "Summarizes the current download and window behavior profile."
     Set-ControlMetadata -Control $InstallBadge -Name "Installation readiness" -Description "Shows whether the selected installation path and mode are ready."
+    Set-ControlMetadata -Control $TxtLiveEndpoint -Name "JDownloader API endpoint" -Description "Enter the local or remote HTTP endpoint for JDownloader's JSON API." -TabIndex 0
+    Set-ControlMetadata -Control $BtnLiveConnect -Name "Connect to JDownloader" -Description "Connect to the configured JDownloader API endpoint." -TabIndex 1
+    Set-ControlMetadata -Control $BtnLiveRefresh -Name "Refresh live queue" -Description "Reload the current JDownloader download queue." -TabIndex 2
+    Set-ControlMetadata -Control $BtnLiveStart -Name "Start downloads" -Description "Start JDownloader's download controller." -TabIndex 3
+    Set-ControlMetadata -Control $BtnLivePause -Name "Pause downloads" -Description "Pause JDownloader downloads." -TabIndex 4
+    Set-ControlMetadata -Control $BtnLiveStop -Name "Stop downloads" -Description "Stop JDownloader's download controller." -TabIndex 5
+    Set-ControlMetadata -Control $BtnLiveGrabberRefresh -Name "Refresh LinkGrabber" -Description "Reload the current LinkGrabber package and link counts." -TabIndex 6
+    Set-ControlMetadata -Control $TxtLiveLinks -Name "Links for LinkGrabber" -Description "Paste one or more URLs to send to JDownloader LinkGrabber." -TabIndex 7
+    Set-ControlMetadata -Control $TxtLivePackage -Name "LinkGrabber package name" -Description "Optional package name for the links sent to LinkGrabber." -TabIndex 8
+    Set-ControlMetadata -Control $BtnLiveAddLinks -Name "Send links to LinkGrabber" -Description "Forward the pasted URLs to JDownloader LinkGrabber." -TabIndex 9
+    Set-ControlMetadata -Control $LiveQueueGrid -Name "JDownloader download queue" -Description "Shows current links, status, progress, speed, and estimated time." -TabIndex 10
 }
 
 # --- Themes Page ---
@@ -3581,7 +3819,7 @@ function Show-ConfirmationDialog {
 # 10. NAVIGATION & EXECUTION
 # ==========================================
 
-$pages = @{ $BtnDashboard = $PageDashboard; $BtnInstallation = $PageInstallation; $BtnTheme = $PageTheme; $BtnBehavior = $PageBehavior; $BtnHardening = $PageHardening; $BtnRepair = $PageRepair }
+$pages = @{ $BtnDashboard = $PageDashboard; $BtnLiveControl = $PageLiveControl; $BtnInstallation = $PageInstallation; $BtnTheme = $PageTheme; $BtnBehavior = $PageBehavior; $BtnHardening = $PageHardening; $BtnRepair = $PageRepair }
 $script:ActiveNavButton = $BtnDashboard
 
 function Update-NavigationState {
@@ -3617,6 +3855,9 @@ function Show-Page {
     if ($target -eq $PageTheme) {
         Resize-ThemePreview
         Update-ThemePreview
+    }
+    if ($target -eq $PageLiveControl -and $script:LiveApiClient) {
+        Refresh-LiveApiQueue
     }
 }
 
@@ -3750,6 +3991,16 @@ $ChkPreserveDate.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceSt
 $ChkClipboard.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
 $ChkDisableAPI.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
 $ChkVmOptions.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
+$BtnLiveConnect.Add_Click({ Refresh-LiveApiQueue })
+$BtnLiveRefresh.Add_Click({ Refresh-LiveApiQueue })
+$BtnLiveStart.Add_Click({ Invoke-LiveApiAction -Action "Start" })
+$BtnLivePause.Add_Click({ Invoke-LiveApiAction -Action "Pause" })
+$BtnLiveStop.Add_Click({ Invoke-LiveApiAction -Action "Stop" })
+$BtnLiveGrabberRefresh.Add_Click({
+    if (-not $script:LiveApiClient) { Refresh-LiveApiQueue }
+    if ($script:LiveApiClient) { Refresh-LiveLinkGrabber }
+})
+$BtnLiveAddLinks.Add_Click({ Send-LiveLinksToGrabber })
 $BtnRestoreWorkspace.Add_Click({
     if (-not $script:SavedWorkspaceState) { return }
     $shouldRestore = Show-ActionPrompt -Title "Restore last successful run" -Message "This replaces the current selections with the workspace that was last applied successfully." -ConfirmText "Restore selections" -ConfirmTag "PrimaryButton"
@@ -3795,6 +4046,7 @@ foreach ($entry in $pages.GetEnumerator()) {
 }
 
 $ToolTip.SetToolTip($BtnDashboard, "Open the dashboard overview page.")
+$ToolTip.SetToolTip($BtnLiveControl, "Open live JDownloader queue and LinkGrabber controls.")
 $ToolTip.SetToolTip($BtnInstallation, "Open installation path and mode options.")
 $ToolTip.SetToolTip($BtnTheme, "Open themes, previews, and icon settings.")
 $ToolTip.SetToolTip($BtnBehavior, "Open download and tray behavior settings.")
@@ -3824,6 +4076,14 @@ $ToolTip.SetToolTip($ChkClipboard, "Automatically detect and queue download link
 $ToolTip.SetToolTip($ChkExe, "Replaces the executable icon for a more cohesive dark desktop setup.")
 $ToolTip.SetToolTip($ChkDisableAPI, "Disables the legacy local REST API (port 3128) that requires no authentication.")
 $ToolTip.SetToolTip($ChkVmOptions, "Creates a JDownloader2.vmoptions file with JVM performance flags. Skipped if the file already exists.")
+$ToolTip.SetToolTip($TxtLiveEndpoint, "Local default: http://127.0.0.1:3128. Enable JDownloader's deprecated local API first.")
+$ToolTip.SetToolTip($BtnLiveConnect, "Connect to the configured JDownloader API endpoint.")
+$ToolTip.SetToolTip($BtnLiveRefresh, "Refresh the download queue and connection status.")
+$ToolTip.SetToolTip($BtnLiveStart, "Start all eligible JDownloader downloads.")
+$ToolTip.SetToolTip($BtnLivePause, "Pause the JDownloader download controller.")
+$ToolTip.SetToolTip($BtnLiveStop, "Stop the JDownloader download controller.")
+$ToolTip.SetToolTip($TxtLiveLinks, "Paste one or more HTTP, HTTPS, FTP, magnet, file, or jdlist links.")
+$ToolTip.SetToolTip($BtnLiveAddLinks, "Send pasted URLs to LinkGrabber.")
 
 
 $Form.Add_Load({
@@ -3879,6 +4139,7 @@ $Form.Add_Load({
     $script:IsBootstrapping = $false
     Update-WorkspaceState
     Start-ThemeImagePreload -Definitions $ThemeDefinitions
+    if ($script:LiveApiPollTimer) { $script:LiveApiPollTimer.Start() }
 })
 
 # Debounce the resize handler: Form fires Resize per drag-pixel, which was causing the full

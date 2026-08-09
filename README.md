@@ -56,6 +56,12 @@ Run this command in **PowerShell** to launch instantly:
 - Safe Mode launcher for troubleshooting  
 - Full uninstall capability for complete removal of JDownloader 2  
 
+### 6. Live Control & LinkGrabber
+- Connects to JDownloader's local JSON API at `http://127.0.0.1:3128` (or a configured HTTP endpoint)
+- Displays the live download queue with status, progress, speed, and ETA
+- Starts, pauses, or stops the download controller without opening JDownloader's main window
+- Sends one or more pasted URLs directly to LinkGrabber without clipboard polling
+
 ---
 
 ## System Requirements
@@ -100,6 +106,11 @@ Run this command in **PowerShell** to launch instantly:
 - Launch Safe Mode  
 - Perform full uninstall  
 
+### Live Control
+- Enable JDownloader's deprecated local API in Advanced Settings, then open **Live Control**
+- Connect to the default `http://127.0.0.1:3128` endpoint or enter another HTTP endpoint
+- Refresh the queue, use controller actions, and send newline-separated links to LinkGrabber
+
 ---
 
 ## Execution Workflow
@@ -117,7 +128,8 @@ For repeatable deployments, export a preset from the dashboard or run:
 - **Settings Persistence:** Stored in `%LOCALAPPDATA%\JD2-Ultimate-Manager\settings.json` with legacy `ProgramData` settings still recognized  
 - **Portable Mode:** `-Portable` stores settings, logs, language cache, and presets beside the script in `.\JD2-UM\`  
 - **Preset Automation:** `-ExportPreset <path>` writes the current/default workspace to JSON; `-Silent -Preset <path>` applies it without opening the GUI  
-- **JSON Manipulation:** Edits JD2’s config files directly, without requiring JD2 to be running  
+- **JSON Manipulation:** Edits JD2's config files directly, without requiring JD2 to be running
+- **Live API:** `Tools\JD2Api.psm1` provides a tested, injectable client for queue queries, controller actions, and LinkGrabber submission
 - **Dependencies:** Automatically downloads 7zr.exe and Resource Hacker when needed  
 - **Security:** All outbound web requests enforce TLS 1.2  
 
