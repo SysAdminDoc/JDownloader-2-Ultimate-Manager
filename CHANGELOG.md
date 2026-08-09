@@ -9,6 +9,7 @@ All notable changes to JDownloader-2-Ultimate-Manager will be documented in this
 - **Local API transport module** in `Tools\JD2Api.psm1`, with injectable request handling and Pester coverage for JSON parameter encoding, queue counters, controller actions, and link validation.
 - **Captcha attention panel** with five-second polling, in-app image display, answer submission, and skip handling that keeps prompts visible while JDownloader stays in the tray.
 - **Account Manager page** with account listing, add, enable, disable, and remove actions backed by JDownloader's local accounts API; credentials are not persisted by the manager.
+- **Bandwidth controls** with per-host concurrency enforcement, a global download cap, and daily off-peak Task Scheduler profiles that use the local API when available and atomic config-file fallback otherwise.
 
 ## [v13.8.0] - 2026-06-27
 

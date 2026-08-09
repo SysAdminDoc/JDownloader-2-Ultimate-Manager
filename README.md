@@ -45,6 +45,7 @@ Run this command in **PowerShell** to launch instantly:
 ### 4. Configuration Management
 - Direct editing of JD2's JSON configuration files without launching the application  
 - Adjustable simultaneous downloads, pause speed, and networking behavior  
+- Per-host concurrency, global speed caps, and daily off-peak bandwidth schedules
 - Tray and taskbar behavior control (Minimize to Tray, Close to Tray)  
 - Fully validated download directory selection  
 - Portable settings mode, JSON workspace presets, and silent preset application for repeatable deployments  
@@ -98,6 +99,8 @@ Run this command in **PowerShell** to launch instantly:
 
 ### Behavior
 - Set maximum simultaneous downloads  
+- Set per-host concurrency and an optional global download cap
+- Schedule a daily off-peak bandwidth profile with `HH:mm` start/end times
 - Control minimize-to-tray and close-to-tray settings  
 - Configure default download folder  
 

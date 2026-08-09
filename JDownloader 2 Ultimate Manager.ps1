@@ -13,7 +13,12 @@ param(
     [switch]$Portable,
     [switch]$Silent,
     [string]$Preset,
-    [string]$ExportPreset
+    [string]$ExportPreset,
+    [ValidateSet("Normal", "OffPeak")][string]$BandwidthProfile,
+    [string]$BandwidthInstallPath,
+    [string]$BandwidthEndpoint,
+    [ValidateRange(0, 2147483647)][int]$BandwidthLimit,
+    [switch]$BandwidthLimitEnabled
 )
 
 Set-StrictMode -Off
@@ -41,6 +46,11 @@ $script:PortableMode = [bool]$Portable
 $script:SilentMode = [bool]$Silent
 $script:PresetPath = if ([string]::IsNullOrWhiteSpace($Preset)) { $null } else { $Preset }
 $script:ExportPresetPath = if ([string]::IsNullOrWhiteSpace($ExportPreset)) { $null } else { $ExportPreset }
+$script:BandwidthProfileRequest = if ([string]::IsNullOrWhiteSpace($BandwidthProfile)) { $null } else { $BandwidthProfile }
+$script:BandwidthInstallPath = if ([string]::IsNullOrWhiteSpace($BandwidthInstallPath)) { $null } else { $BandwidthInstallPath }
+$script:BandwidthEndpoint = if ([string]::IsNullOrWhiteSpace($BandwidthEndpoint)) { "http://127.0.0.1:3128" } else { $BandwidthEndpoint }
+$script:BandwidthLimit = [int]$BandwidthLimit
+$script:BandwidthLimitEnabled = [bool]$BandwidthLimitEnabled
 $script:ApiModulePath = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'Tools\JD2Api.psm1' } else { $null }
 $script:ApiModuleLoaded = $false
 if ($script:ApiModulePath -and (Test-Path -LiteralPath $script:ApiModulePath)) {
@@ -1892,6 +1902,19 @@ function Execute-Operations {
             [void](Write-JsonAtomic -Path (Join-Path $cfgPath 'org.jdownloader.settings.GeneralSettings.json') -Payload $genObj)
         } catch { Log-Status "Failed to write general settings: $_" "WARN" }
 
+        if ($GUI_State.Contains("BandwidthScheduleEnabled")) {
+            $scheduleSynced = Sync-BandwidthSchedule `
+                -InstallPath $JDPath `
+                -Enabled ([bool]$GUI_State.BandwidthScheduleEnabled) `
+                -StartTime ([string]$GUI_State.BandwidthScheduleStart) `
+                -EndTime ([string]$GUI_State.BandwidthScheduleEnd) `
+                -OffPeakLimit ([int]$GUI_State.BandwidthScheduleLimit) `
+                -NormalLimit ([int]$GUI_State.SpeedLimit) `
+                -NormalLimitEnabled ([bool]$GUI_State.SpeedLimitEnabled) `
+                -Endpoint ([string]$GUI_State.BandwidthEndpoint)
+            if (-not $scheduleSynced) { Log-Status "Bandwidth schedule could not be synchronized; the base bandwidth settings were still applied." "WARN" }
+        }
+
         try {
             $trayObj = $Template_Tray | ConvertFrom-Json
             $trayObj.startminimizedenabled = $GUI_State.StartMin
@@ -1936,6 +1959,164 @@ function Execute-Operations {
         if (-not $script:SilentMode) {
             [System.Windows.Forms.MessageBox]::Show("An error occurred during execution. Check the log file for details.`n`nError: $_", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         }
+        return $false
+    }
+}
+
+function ConvertTo-BandwidthScheduleTime {
+    param($Value)
+    $text = ([string]$Value).Trim()
+    if ($text -notmatch '^(?<hours>\d{1,2}):(?<minutes>\d{2})$') { return $null }
+    $hours = 0; $minutes = 0
+    if (-not [int]::TryParse($Matches.hours, [ref]$hours)) { return $null }
+    if (-not [int]::TryParse($Matches.minutes, [ref]$minutes)) { return $null }
+    if ($hours -lt 0 -or $hours -gt 23 -or $minutes -lt 0 -or $minutes -gt 59) { return $null }
+    return "{0:D2}:{1:D2}" -f $hours, $minutes
+}
+
+function Add-BandwidthConfigProperty {
+    param($Object, [string]$Name, $Value)
+    if (-not $Object.PSObject.Properties[$Name]) {
+        $Object | Add-Member -MemberType NoteProperty -Name $Name -Value $Value
+    } else {
+        $Object.$Name = $Value
+    }
+}
+
+function Invoke-BandwidthProfile {
+    param(
+        [ValidateSet("Normal", "OffPeak")][string]$BandwidthProfileName,
+        [string]$InstallPath,
+        [string]$Endpoint = "http://127.0.0.1:3128",
+        [bool]$LimitEnabled = $false,
+        [ValidateRange(1, 2147483647)][int]$LimitBytesPerSecond = 51200
+    )
+    if (-not (Test-IsSafeInstallRoot -Path $InstallPath)) {
+        Log-Status "Bandwidth profile refused: '$InstallPath' does not look like a JDownloader installation." "WARN"
+        return 1
+    }
+
+    if ($script:ApiModuleLoaded) {
+        try {
+            $client = New-JD2ApiClient -BaseUrl $(if ([string]::IsNullOrWhiteSpace($Endpoint)) { "http://127.0.0.1:3128" } else { $Endpoint }) -TimeoutSec 10
+            $apiResult = Set-JD2DownloadBandwidth -Client $client -Enabled $LimitEnabled -LimitBytesPerSecond $LimitBytesPerSecond
+            if ($apiResult -is [bool] -and -not $apiResult) { throw "JDownloader rejected the bandwidth update." }
+            Log-Status ("Applied {0} bandwidth profile through the JDownloader API." -f $BandwidthProfileName) "SUCCESS"
+            return 0
+        } catch {
+            Log-Status "Live bandwidth API update failed; falling back to the GeneralSettings file: $($_.Exception.Message)" "DEBUG"
+        }
+    }
+
+    $generalPath = Join-Path $InstallPath "cfg\org.jdownloader.settings.GeneralSettings.json"
+    if (-not (Test-Path -LiteralPath $generalPath)) {
+        Log-Status "Bandwidth profile could not find GeneralSettings.json at '$generalPath'." "WARN"
+        return 1
+    }
+    try {
+        $generalObj = Get-Content -LiteralPath $generalPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+        Add-BandwidthConfigProperty -Object $generalObj -Name "downloadspeedlimitenabled" -Value ([bool]$LimitEnabled)
+        Add-BandwidthConfigProperty -Object $generalObj -Name "downloadspeedlimit" -Value ([int]$LimitBytesPerSecond)
+        if (-not (Write-JsonAtomic -Path $generalPath -Payload $generalObj)) { throw "Atomic write failed." }
+        Log-Status ("Applied {0} bandwidth profile to GeneralSettings.json." -f $BandwidthProfileName) "SUCCESS"
+        return 0
+    } catch {
+        Log-Status "Bandwidth profile could not update GeneralSettings.json: $($_.Exception.Message)" "WARN"
+        return 1
+    }
+}
+
+function Get-BandwidthScheduleTaskNames {
+    return @(
+        "JDownloader 2 UM - Bandwidth Off-Peak Start",
+        "JDownloader 2 UM - Bandwidth Off-Peak End"
+    )
+}
+
+function New-BandwidthScheduledAction {
+    param(
+        [ValidateSet("Normal", "OffPeak")][string]$BandwidthProfileName,
+        [Parameter(Mandatory)][string]$InstallPath,
+        [Parameter(Mandatory)][string]$Endpoint,
+        [bool]$LimitEnabled,
+        [ValidateRange(1, 2147483647)][int]$LimitBytesPerSecond
+    )
+    if ([string]::IsNullOrWhiteSpace($PSCommandPath)) { throw "The manager path is unavailable for scheduled bandwidth actions." }
+    $endpointText = if ([string]::IsNullOrWhiteSpace($Endpoint)) { "http://127.0.0.1:3128" } else { $Endpoint }
+    if ([System.IO.Path]::GetExtension($PSCommandPath) -ieq ".ps1") {
+        $scriptLiteral = "'" + ($PSCommandPath -replace "'", "''") + "'"
+        $installLiteral = "'" + ($InstallPath -replace "'", "''") + "'"
+        $endpointLiteral = "'" + ($endpointText -replace "'", "''") + "'"
+        $commandText = "& $scriptLiteral -BandwidthProfile $BandwidthProfileName -BandwidthInstallPath $installLiteral -BandwidthEndpoint $endpointLiteral -BandwidthLimit $LimitBytesPerSecond"
+        if ($LimitEnabled) { $commandText += " -BandwidthLimitEnabled" }
+        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
+        $powershellPath = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+        $actionArguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
+        return New-ScheduledTaskAction -Execute $powershellPath -Argument $actionArguments -WorkingDirectory (Split-Path -Parent $PSCommandPath)
+    }
+
+    $installArgument = '"' + $InstallPath.Replace('"', '\"') + '"'
+    $endpointArgument = '"' + $endpointText.Replace('"', '\"') + '"'
+    $actionArguments = "-BandwidthProfile $BandwidthProfileName -BandwidthInstallPath $installArgument -BandwidthEndpoint $endpointArgument -BandwidthLimit $LimitBytesPerSecond"
+    if ($LimitEnabled) { $actionArguments += " -BandwidthLimitEnabled" }
+    return New-ScheduledTaskAction -Execute $PSCommandPath -Argument $actionArguments -WorkingDirectory (Split-Path -Parent $PSCommandPath)
+}
+
+function Sync-BandwidthSchedule {
+    param(
+        [Parameter(Mandatory)][string]$InstallPath,
+        [bool]$Enabled,
+        [string]$StartTime = "09:00",
+        [string]$EndTime = "17:00",
+        [ValidateRange(1, 2147483647)][int]$OffPeakLimit = 2097152,
+        [ValidateRange(1, 2147483647)][int]$NormalLimit = 51200,
+        [bool]$NormalLimitEnabled = $false,
+        [string]$Endpoint = "http://127.0.0.1:3128"
+    )
+    $taskNames = @(Get-BandwidthScheduleTaskNames)
+    $registerCommand = Get-Command Register-ScheduledTask -CommandType Cmdlet -ErrorAction SilentlyContinue
+    if (-not $registerCommand) {
+        Log-Status "Windows Task Scheduler cmdlets are unavailable; bandwidth scheduling was not configured." "WARN"
+        return $false
+    }
+
+    if (-not $Enabled) {
+        foreach ($taskName in $taskNames) {
+            try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        }
+        Log-Status "Scheduled off-peak bandwidth control disabled." "INFO"
+        return $true
+    }
+
+    $startText = ConvertTo-BandwidthScheduleTime -Value $StartTime
+    $endText = ConvertTo-BandwidthScheduleTime -Value $EndTime
+    if (-not $startText -or -not $endText -or $startText -eq $endText) {
+        Log-Status "Bandwidth schedule needs two different valid HH:mm times." "WARN"
+        return $false
+    }
+    try {
+        $startParts = $startText -split ":"
+        $endParts = $endText -split ":"
+        $startAt = [datetime]::Today.AddHours([int]$startParts[0]).AddMinutes([int]$startParts[1])
+        $endAt = [datetime]::Today.AddHours([int]$endParts[0]).AddMinutes([int]$endParts[1])
+        $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+        $startAction = New-BandwidthScheduledAction -BandwidthProfileName "OffPeak" -InstallPath $InstallPath -Endpoint $Endpoint -LimitEnabled $true -LimitBytesPerSecond $OffPeakLimit
+        $endAction = New-BandwidthScheduledAction -BandwidthProfileName "Normal" -InstallPath $InstallPath -Endpoint $Endpoint -LimitEnabled $NormalLimitEnabled -LimitBytesPerSecond $NormalLimit
+        $startTrigger = New-ScheduledTaskTrigger -Daily -At $startAt
+        $endTrigger = New-ScheduledTaskTrigger -Daily -At $endAt
+
+        foreach ($taskName in $taskNames) {
+            try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        }
+        Register-ScheduledTask -TaskName $taskNames[0] -Action $startAction -Trigger $startTrigger -Principal $principal -Force | Out-Null
+        Register-ScheduledTask -TaskName $taskNames[1] -Action $endAction -Trigger $endTrigger -Principal $principal -Force | Out-Null
+        Log-Status ("Scheduled off-peak cap: {0} to {1}." -f $startText, $endText) "SUCCESS"
+        return $true
+    } catch {
+        foreach ($taskName in $taskNames) {
+            try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        }
+        Log-Status "Could not configure scheduled bandwidth tasks: $($_.Exception.Message)" "WARN"
         return $false
     }
 }
@@ -2297,7 +2478,7 @@ $PageLiveControl  = New-PagePanel -CanvasHeight 1030; [void]$MainPanel.Controls.
 $PageAccounts     = New-PagePanel -CanvasHeight 660; [void]$MainPanel.Controls.Add($PageAccounts)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
-$PageBehavior     = New-PagePanel -CanvasHeight 740; [void]$MainPanel.Controls.Add($PageBehavior)
+$PageBehavior     = New-PagePanel -CanvasHeight 1040; [void]$MainPanel.Controls.Add($PageBehavior)
 $PageHardening    = New-PagePanel -CanvasHeight 780; [void]$MainPanel.Controls.Add($PageHardening)
 $PageRepair       = New-PagePanel -CanvasHeight 572; [void]$MainPanel.Controls.Add($PageRepair)
 
@@ -3066,6 +3247,14 @@ function Apply-StateToControls {
         if (Test-StateHas $State "AutoUpdate")   { $ChkUpdate.Checked     = ConvertTo-SafeBool $State.AutoUpdate    $true }
         if (Test-StateHas $State "MaxChunks")    { Set-NumericSafe -Control $NumChunks  -Value $State.MaxChunks }
         if (Test-StateHas $State "MaxPerHost")   { Set-NumericSafe -Control $NumPerHost -Value $State.MaxPerHost }
+        if (Test-StateHas $State "MaxPerHostEnabled") { $ChkPerHostEnabled.Checked = ConvertTo-SafeBool $State.MaxPerHostEnabled $false }
+        if (Test-StateHas $State "SpeedLimitEnabled") { $ChkSpeedLimit.Checked = ConvertTo-SafeBool $State.SpeedLimitEnabled $false }
+        if (Test-StateHas $State "SpeedLimit") { Set-NumericSafe -Control $NumSpeedLimit -Value ([math]::Max(1, [math]::Ceiling([int64]$State.SpeedLimit / 1024))) }
+        if (Test-StateHas $State "BandwidthScheduleEnabled") { $ChkBandwidthSchedule.Checked = ConvertTo-SafeBool $State.BandwidthScheduleEnabled $false }
+        if (Test-StateHas $State "BandwidthScheduleStart") { $TxtBandwidthStart.Text = [string]$State.BandwidthScheduleStart }
+        if (Test-StateHas $State "BandwidthScheduleEnd") { $TxtBandwidthEnd.Text = [string]$State.BandwidthScheduleEnd }
+        if (Test-StateHas $State "BandwidthScheduleLimit") { Set-NumericSafe -Control $NumOffPeakLimit -Value ([math]::Max(1, [math]::Ceiling([int64]$State.BandwidthScheduleLimit / 1024))) }
+        if (Test-StateHas $State "BandwidthEndpoint") { $TxtLiveEndpoint.Text = [string]$State.BandwidthEndpoint }
         if (Test-StateHas $State "HashCheck")       { $ChkHashCheck.Checked    = ConvertTo-SafeBool $State.HashCheck        $true }
         if (Test-StateHas $State "PreserveFileDate"){ $ChkPreserveDate.Checked = ConvertTo-SafeBool $State.PreserveFileDate $false }
         if (Test-StateHas $State "ClipboardMonitor"){ $ChkClipboard.Checked    = ConvertTo-SafeBool $State.ClipboardMonitor $true }
@@ -3122,6 +3311,14 @@ function Get-CurrentGuiState {
         PauseSpeed      = [int]$NumPause.Value
         MaxChunks       = [int]$NumChunks.Value
         MaxPerHost      = [int]$NumPerHost.Value
+        MaxPerHostEnabled= [bool]$ChkPerHostEnabled.Checked
+        SpeedLimitEnabled= [bool]$ChkSpeedLimit.Checked
+        SpeedLimit       = [int]$NumSpeedLimit.Value * 1024
+        BandwidthScheduleEnabled= [bool]$ChkBandwidthSchedule.Checked
+        BandwidthScheduleStart= $TxtBandwidthStart.Text.Trim()
+        BandwidthScheduleEnd= $TxtBandwidthEnd.Text.Trim()
+        BandwidthScheduleLimit= [int]$NumOffPeakLimit.Value * 1024
+        BandwidthEndpoint= $TxtLiveEndpoint.Text.Trim()
         HashCheck       = [bool]$ChkHashCheck.Checked
         PreserveFileDate= [bool]$ChkPreserveDate.Checked
         ClipboardMonitor= [bool]$ChkClipboard.Checked
@@ -3142,6 +3339,12 @@ function Get-NormalizedStateObject {
 
     $languageCode = [string]$State.LanguageCode
     if ([string]::IsNullOrWhiteSpace($languageCode)) { $languageCode = $CurrentLangCode }
+    $bandwidthEndpoint = ([string]$State.BandwidthEndpoint).Trim()
+    if ([string]::IsNullOrWhiteSpace($bandwidthEndpoint)) { $bandwidthEndpoint = "http://127.0.0.1:3128" }
+    $scheduleStart = ConvertTo-BandwidthScheduleTime -Value $State.BandwidthScheduleStart
+    if (-not $scheduleStart) { $scheduleStart = "09:00" }
+    $scheduleEnd = ConvertTo-BandwidthScheduleTime -Value $State.BandwidthScheduleEnd
+    if (-not $scheduleEnd) { $scheduleEnd = "17:00" }
 
     # Parse numerics safely - a hand-edited JSON with "MaxSim": "three" should not throw here.
     $toInt = {
@@ -3171,6 +3374,14 @@ function Get-NormalizedStateObject {
         PauseSpeed      = & $toInt $State.PauseSpeed 10240
         MaxChunks       = if (Test-StateHas $State "MaxChunks")       { & $toInt $State.MaxChunks 1 }       else { 1 }
         MaxPerHost      = if (Test-StateHas $State "MaxPerHost")      { & $toInt $State.MaxPerHost 1 }      else { 1 }
+        MaxPerHostEnabled= if (Test-StateHas $State "MaxPerHostEnabled") { ConvertTo-SafeBool $State.MaxPerHostEnabled $false } else { $false }
+        SpeedLimitEnabled= if (Test-StateHas $State "SpeedLimitEnabled") { ConvertTo-SafeBool $State.SpeedLimitEnabled $false } else { $false }
+        SpeedLimit       = if (Test-StateHas $State "SpeedLimit") { [math]::Max(1024, (& $toInt $State.SpeedLimit 51200)) } else { 51200 }
+        BandwidthScheduleEnabled= if (Test-StateHas $State "BandwidthScheduleEnabled") { ConvertTo-SafeBool $State.BandwidthScheduleEnabled $false } else { $false }
+        BandwidthScheduleStart= $scheduleStart
+        BandwidthScheduleEnd= $scheduleEnd
+        BandwidthScheduleLimit= if (Test-StateHas $State "BandwidthScheduleLimit") { [math]::Max(1024, (& $toInt $State.BandwidthScheduleLimit 2097152)) } else { 2097152 }
+        BandwidthEndpoint= $bandwidthEndpoint
         HashCheck       = if (Test-StateHas $State "HashCheck")        { ConvertTo-SafeBool $State.HashCheck        $true }  else { $true }
         PreserveFileDate= if (Test-StateHas $State "PreserveFileDate") { ConvertTo-SafeBool $State.PreserveFileDate $false } else { $false }
         ClipboardMonitor= if (Test-StateHas $State "ClipboardMonitor") { ConvertTo-SafeBool $State.ClipboardMonitor $true }  else { $true }
@@ -3202,6 +3413,14 @@ function Get-DefaultWorkspaceState {
         PauseSpeed      = 10240
         MaxChunks       = 1
         MaxPerHost      = 1
+        MaxPerHostEnabled= $false
+        SpeedLimitEnabled= $false
+        SpeedLimit       = 51200
+        BandwidthScheduleEnabled= $false
+        BandwidthScheduleStart= "09:00"
+        BandwidthScheduleEnd= "17:00"
+        BandwidthScheduleLimit= 2097152
+        BandwidthEndpoint= "http://127.0.0.1:3128"
         HashCheck       = $true
         PreserveFileDate= $false
         ClipboardMonitor= $true
@@ -3297,6 +3516,17 @@ function Start-SilentWorkspace {
     return 1
 }
 
+if ($script:BandwidthProfileRequest) {
+    $script:SilentMode = $true
+    $profileExitCode = Invoke-BandwidthProfile `
+        -BandwidthProfileName $script:BandwidthProfileRequest `
+        -InstallPath $script:BandwidthInstallPath `
+        -Endpoint $script:BandwidthEndpoint `
+        -LimitEnabled $script:BandwidthLimitEnabled `
+        -LimitBytesPerSecond ([math]::Max(1, $script:BandwidthLimit))
+    [Environment]::Exit($profileExitCode)
+}
+
 if ($script:SilentMode -or $script:ExportPresetPath) {
     $exitCode = Start-SilentWorkspace
     [Environment]::Exit($exitCode)
@@ -3325,7 +3555,7 @@ function Get-ChangedWorkspaceAreas {
     $areaMap = [ordered]@{
         "installation setup"   = @("Mode", "InstallSource", "InstallPath")
         "appearance"           = @("ThemeName", "IconPack", "WindowDec", "ForceMinimal")
-        "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray", "MaxChunks", "MaxPerHost", "HashCheck", "PreserveFileDate", "ClipboardMonitor")
+        "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray", "MaxChunks", "MaxPerHost", "MaxPerHostEnabled", "SpeedLimitEnabled", "SpeedLimit", "BandwidthScheduleEnabled", "BandwidthScheduleStart", "BandwidthScheduleEnd", "BandwidthScheduleLimit", "BandwidthEndpoint", "HashCheck", "PreserveFileDate", "ClipboardMonitor")
         "hardening"            = @("PatchExe", "AutoUpdate", "DisableLocalAPI", "WriteVmOptions")
         "workspace preferences"= @("GuiThemeName", "LanguageCode")
     }
@@ -3450,9 +3680,16 @@ function Apply-AccessibilityMetadata {
 
     Set-ControlMetadata -Control $NumChunks     -Name "Chunks per file" -Description "Number of parallel segments per download. Increase for premium hosts." -TabIndex 3
     Set-ControlMetadata -Control $NumPerHost    -Name "Per-host download limit" -Description "Max simultaneous downloads from any single host." -TabIndex 4
-    Set-ControlMetadata -Control $ChkHashCheck  -Name "Hash check" -Description "Verify file integrity after download completes." -TabIndex 5
-    Set-ControlMetadata -Control $ChkPreserveDate -Name "Preserve file dates" -Description "Keep the original file modification timestamp from the server." -TabIndex 6
-    Set-ControlMetadata -Control $ChkClipboard  -Name "Clipboard monitoring" -Description "Automatically detect download links copied to clipboard." -TabIndex 7
+    Set-ControlMetadata -Control $ChkPerHostEnabled -Name "Enforce per-host limit" -Description "Apply the configured maximum to simultaneous downloads from each host." -TabIndex 5
+    Set-ControlMetadata -Control $ChkSpeedLimit -Name "Global download cap" -Description "Enable JDownloader's global download speed limit." -TabIndex 6
+    Set-ControlMetadata -Control $NumSpeedLimit -Name "Global cap in kilobytes per second" -Description "Choose the global download cap in kilobytes per second." -TabIndex 7
+    Set-ControlMetadata -Control $ChkBandwidthSchedule -Name "Off-peak bandwidth schedule" -Description "Create daily tasks that switch the global download cap at the chosen times." -TabIndex 8
+    Set-ControlMetadata -Control $TxtBandwidthStart -Name "Off-peak start time" -Description "Enter the daily off-peak start time as HH:mm." -TabIndex 9
+    Set-ControlMetadata -Control $TxtBandwidthEnd -Name "Off-peak end time" -Description "Enter the daily off-peak end time as HH:mm." -TabIndex 10
+    Set-ControlMetadata -Control $NumOffPeakLimit -Name "Off-peak cap in kilobytes per second" -Description "Choose the global cap used during the off-peak window." -TabIndex 11
+    Set-ControlMetadata -Control $ChkHashCheck  -Name "Hash check" -Description "Verify file integrity after download completes." -TabIndex 12
+    Set-ControlMetadata -Control $ChkPreserveDate -Name "Preserve file dates" -Description "Keep the original file modification timestamp from the server." -TabIndex 13
+    Set-ControlMetadata -Control $ChkClipboard  -Name "Clipboard monitoring" -Description "Automatically detect download links copied to clipboard." -TabIndex 14
     Set-ControlMetadata -Control $ChkExe       -Name "Apply dark executable icon" -Description "Replace the executable icon with the darker icon variant." -TabIndex 0
     Set-ControlMetadata -Control $ChkUpdate    -Name "Run update after completion" -Description "Launch JDownloader's update routine after the selected work finishes." -TabIndex 1
     Set-ControlMetadata -Control $ChkDisableAPI -Name "Disable deprecated local API" -Description "Block the legacy unauthenticated REST API on port 3128." -TabIndex 2
@@ -3667,7 +3904,7 @@ $ChkCloseTray = New-CheckBox -Parent $BehTray -LangKey "CloseToTray" -Location (
 [void](New-Label -Parent $BehTray -Text "Recommended: keep tray behavior enabled if JDownloader runs in the background most of the time." -Location (New-Object System.Drawing.Point(24, 232)) -Size (New-Object System.Drawing.Size(320, 50)) -AutoSize $false -Tag "BodyMuted")
 
 # --- Advanced download tuning ---
-$BehAdvanced = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(0, 548)) -Size (New-Object System.Drawing.Size(640, 168))
+$BehAdvanced = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(0, 548)) -Size (New-Object System.Drawing.Size(640, 224))
 [void](New-Label -Parent $BehAdvanced -Text "Advanced download tuning" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
 [void](New-Label -Parent $BehAdvanced -Text "Chunks per file" -Location (New-Object System.Drawing.Point(24, 68)))
 $NumChunks = New-NumericUpDown -Parent $BehAdvanced -Location (New-Object System.Drawing.Point(412, 64)) -Min 1 -Max 20 -Value 1 -Tag "Input"
@@ -3675,12 +3912,30 @@ $NumChunks = New-NumericUpDown -Parent $BehAdvanced -Location (New-Object System
 [void](New-Label -Parent $BehAdvanced -Text "Per-host limit" -Location (New-Object System.Drawing.Point(24, 128)))
 $NumPerHost = New-NumericUpDown -Parent $BehAdvanced -Location (New-Object System.Drawing.Point(412, 124)) -Min 1 -Max 20 -Value 1 -Tag "Input"
 [void](New-Label -Parent $BehAdvanced -Text "Max simultaneous downloads from any single host. Increase for premium accounts." -Location (New-Object System.Drawing.Point(24, 150)) -Size (New-Object System.Drawing.Size(520, 18)) -AutoSize $false -Tag "BodyMuted")
+$ChkPerHostEnabled = New-CheckBox -Parent $BehAdvanced -Text "Enforce per-host limit" -Location (New-Object System.Drawing.Point(24, 178)) -Checked $false
+[void](New-Label -Parent $BehAdvanced -Text "Leave off to keep JDownloader's global rule only." -Location (New-Object System.Drawing.Point(48, 202)) -Size (New-Object System.Drawing.Size(540, 18)) -AutoSize $false -Tag "BodyMuted")
 
-$BehFileOpts = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(662, 548)) -Size (New-Object System.Drawing.Size(378, 168)) -Tag "SurfaceAlt"
+$BehFileOpts = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(662, 548)) -Size (New-Object System.Drawing.Size(378, 224)) -Tag "SurfaceAlt"
 [void](New-Label -Parent $BehFileOpts -Text "File handling" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
 $ChkHashCheck = New-CheckBox -Parent $BehFileOpts -Text "Verify file integrity (hash check)" -Location (New-Object System.Drawing.Point(24, 68)) -Checked $true
 $ChkPreserveDate = New-CheckBox -Parent $BehFileOpts -Text "Preserve original file dates" -Location (New-Object System.Drawing.Point(24, 100))
 $ChkClipboard = New-CheckBox -Parent $BehFileOpts -Text "Monitor clipboard for download links" -Location (New-Object System.Drawing.Point(24, 132)) -Checked $true
+
+$BehBandwidth = New-Surface -Parent $BehaviorCanvas -Location (New-Object System.Drawing.Point(0, 792)) -Size (New-Object System.Drawing.Size(1040, 220)) -Tag "Surface"
+[void](New-Label -Parent $BehBandwidth -Text "Bandwidth cap and schedule" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+$ChkSpeedLimit = New-CheckBox -Parent $BehBandwidth -Text "Enable global download cap" -Location (New-Object System.Drawing.Point(24, 64)) -Checked $false
+[void](New-Label -Parent $BehBandwidth -Text "Global cap (KB/s)" -Location (New-Object System.Drawing.Point(24, 104)))
+$NumSpeedLimit = New-NumericUpDown -Parent $BehBandwidth -Location (New-Object System.Drawing.Point(412, 98)) -Min 1 -Max 1048576 -Value 50 -Tag "Input"
+[void](New-Label -Parent $BehBandwidth -Text "The cap applies across all active downloads when enabled." -Location (New-Object System.Drawing.Point(24, 140)) -Size (New-Object System.Drawing.Size(520, 24)) -AutoSize $false -Tag "BodyMuted")
+
+$ChkBandwidthSchedule = New-CheckBox -Parent $BehBandwidth -Text "Enable off-peak schedule" -Location (New-Object System.Drawing.Point(560, 64)) -Checked $false
+[void](New-Label -Parent $BehBandwidth -Text "Start" -Location (New-Object System.Drawing.Point(560, 104)))
+$TxtBandwidthStart = New-TextBox -Parent $BehBandwidth -Location (New-Object System.Drawing.Point(610, 98)) -Size (New-Object System.Drawing.Size(74, 32)) -Text "09:00" -Tag "Input"
+[void](New-Label -Parent $BehBandwidth -Text "End" -Location (New-Object System.Drawing.Point(704, 104)))
+$TxtBandwidthEnd = New-TextBox -Parent $BehBandwidth -Location (New-Object System.Drawing.Point(744, 98)) -Size (New-Object System.Drawing.Size(74, 32)) -Text "17:00" -Tag "Input"
+[void](New-Label -Parent $BehBandwidth -Text "Off-peak cap (KB/s)" -Location (New-Object System.Drawing.Point(560, 146)))
+$NumOffPeakLimit = New-NumericUpDown -Parent $BehBandwidth -Location (New-Object System.Drawing.Point(852, 140)) -Min 1 -Max 1048576 -Value 2048 -Tag "Input"
+[void](New-Label -Parent $BehBandwidth -Text "Uses HH:mm and creates two user-scoped Windows tasks." -Location (New-Object System.Drawing.Point(560, 178)) -Size (New-Object System.Drawing.Size(444, 24)) -AutoSize $false -Tag "BodyMuted")
 
 # --- Hardening Page ---
 $HardHero = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 156))

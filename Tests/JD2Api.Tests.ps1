@@ -95,6 +95,43 @@ Describe "JD2 API transport" {
         ($seen -join "`n") | Should -Match "captcha/skip"
     }
 
+    It "queries and updates global bandwidth settings through the config API" {
+        $seen = New-Object System.Collections.Generic.List[string]
+        $invoker = {
+            param($uri)
+            [void]$seen.Add($uri)
+            if ($uri -match "config/query") {
+                return '{"data":[{"interfaceName":"org.jdownloader.settings.GeneralSettings","storage":"cfg","key":"downloadspeedlimitenabled"},{"interfaceName":"org.jdownloader.settings.GeneralSettings","storage":"cfg","key":"downloadspeedlimit"}]}'
+            }
+            return '{"data":true}'
+        }.GetNewClosure()
+        $client = New-JD2ApiClient -RequestInvoker $invoker
+
+        Set-JD2DownloadBandwidth -Client $client -Enabled $true -LimitBytesPerSecond 2097152 | Should -BeTrue
+        $seen.Count | Should -Be 3
+        ($seen -join "`n") | Should -Match "config/query"
+        ($seen -join "`n") | Should -Match "config/set"
+    }
+
+    It "queries and updates per-host bandwidth settings through the config API" {
+        $seen = New-Object System.Collections.Generic.List[string]
+        $invoker = {
+            param($uri)
+            [void]$seen.Add($uri)
+            if ($uri -match "config/query") {
+                return '{"data":[{"interfaceName":"org.jdownloader.settings.GeneralSettings","storage":"cfg","key":"maxdownloadsperhostenabled"},{"interfaceName":"org.jdownloader.settings.GeneralSettings","storage":"cfg","key":"maxsimultanedownloadsperhost"}]}'
+            }
+            return '{"data":true}'
+        }.GetNewClosure()
+        $client = New-JD2ApiClient -RequestInvoker $invoker
+
+        Set-JD2PerHostBandwidth -Client $client -Enabled $true -MaxDownloadsPerHost 4 | Should -BeTrue
+        $seen.Count | Should -Be 3
+        ($seen -join "`n") | Should -Match "config/query"
+        ($seen -join "`n") | Should -Match "maxdownloadsperhostenabled"
+        ($seen -join "`n") | Should -Match "maxsimultanedownloadsperhost"
+    }
+
     It "lists accounts and maps account mutations" {
         $seen = New-Object System.Collections.Generic.List[string]
         $invoker = {

@@ -401,6 +401,76 @@ function Skip-JD2Captcha {
     return Invoke-JD2ApiMethod -Client $Client -Namespace "captcha" -Method "skip" -Parameters @($Id, $Type)
 }
 
+function Get-JD2ConfigEntries {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [string]$ConfigInterface = "org.jdownloader.settings.GeneralSettings",
+        [string]$Pattern = "downloadspeedlimit"
+    )
+    $query = [ordered]@{
+        configInterface   = $ConfigInterface
+        defaultValues     = $false
+        description       = $false
+        enumInfo          = $false
+        includeExtensions = $false
+        pattern           = $Pattern
+        values            = $true
+    }
+    return @(Invoke-JD2ApiMethod -Client $Client -Namespace "config" -Method "query" -Parameters @($query))
+}
+
+function Set-JD2ConfigValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][string]$InterfaceName,
+        [Parameter(Mandatory)][string]$Storage,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)]$Value
+    )
+    if ([string]::IsNullOrWhiteSpace($InterfaceName)) { throw "JDownloader config interface cannot be empty." }
+    if ([string]::IsNullOrWhiteSpace($Storage)) { throw "JDownloader config storage cannot be empty." }
+    if ([string]::IsNullOrWhiteSpace($Key)) { throw "JDownloader config key cannot be empty." }
+    return Invoke-JD2ApiMethod -Client $Client -Namespace "config" -Method "set" -Parameters @($InterfaceName, $Storage, $Key, $Value)
+}
+
+function Set-JD2DownloadBandwidth {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][bool]$Enabled,
+        [ValidateRange(1, 2147483647)][int]$LimitBytesPerSecond = 51200
+    )
+    $entries = @(Get-JD2ConfigEntries -Client $Client -ConfigInterface "org.jdownloader.settings.GeneralSettings" -Pattern "downloadspeedlimit")
+    $enabledEntry = $entries | Where-Object { [string]$_.key -eq "downloadspeedlimitenabled" } | Select-Object -First 1
+    $limitEntry = $entries | Where-Object { [string]$_.key -eq "downloadspeedlimit" } | Select-Object -First 1
+    if (-not $enabledEntry -or -not $limitEntry) {
+        throw "JDownloader did not expose both global bandwidth settings through its API."
+    }
+
+    [void](Set-JD2ConfigValue -Client $Client -InterfaceName ([string]$enabledEntry.interfaceName) -Storage ([string]$enabledEntry.storage) -Key ([string]$enabledEntry.key) -Value $Enabled)
+    return Set-JD2ConfigValue -Client $Client -InterfaceName ([string]$limitEntry.interfaceName) -Storage ([string]$limitEntry.storage) -Key ([string]$limitEntry.key) -Value $LimitBytesPerSecond
+}
+
+function Set-JD2PerHostBandwidth {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][bool]$Enabled,
+        [ValidateRange(1, 2147483647)][int]$MaxDownloadsPerHost = 1
+    )
+    $entries = @(Get-JD2ConfigEntries -Client $Client -ConfigInterface "org.jdownloader.settings.GeneralSettings" -Pattern "perhost")
+    $enabledEntry = $entries | Where-Object { [string]$_.key -eq "maxdownloadsperhostenabled" } | Select-Object -First 1
+    $limitEntry = $entries | Where-Object { [string]$_.key -eq "maxsimultanedownloadsperhost" } | Select-Object -First 1
+    if (-not $enabledEntry -or -not $limitEntry) {
+        throw "JDownloader did not expose both per-host bandwidth settings through its API."
+    }
+
+    [void](Set-JD2ConfigValue -Client $Client -InterfaceName ([string]$enabledEntry.interfaceName) -Storage ([string]$enabledEntry.storage) -Key ([string]$enabledEntry.key) -Value $Enabled)
+    return Set-JD2ConfigValue -Client $Client -InterfaceName ([string]$limitEntry.interfaceName) -Storage ([string]$limitEntry.storage) -Key ([string]$limitEntry.key) -Value $MaxDownloadsPerHost
+}
+
 function Get-JD2Accounts {
     [CmdletBinding()]
     param(
@@ -473,6 +543,10 @@ Export-ModuleMember -Function @(
     "Get-JD2CaptchaImage",
     "Submit-JD2Captcha",
     "Skip-JD2Captcha",
+    "Get-JD2ConfigEntries",
+    "Set-JD2ConfigValue",
+    "Set-JD2DownloadBandwidth",
+    "Set-JD2PerHostBandwidth",
     "Get-JD2Accounts",
     "Add-JD2Account",
     "Set-JD2AccountEnabled",
