@@ -18,6 +18,7 @@ All notable changes to JDownloader-2-Ultimate-Manager will be documented in this
 - **Download integrations** with provider-validated Discord/Slack webhooks, hidden post-download hooks, and DPAPI-protected webhook settings excluded from presets.
 - **Dry-run diff viewer** that lists changed settings plus predicted files and Task Scheduler actions before Apply Workspace begins.
 - **PowerShell Core/AppImage configuration path** in `Tools\JD2CrossPlatform.ps1`, with atomic JSON writes, cfg snapshots, cleanup, path guards, and Pester coverage.
+- **Queue recovery and external lanes** that persist active URLs with DPAPI protection across reconnects and expose optional yt-dlp, aria2c, and FlareSolverr helpers from Live Control.
 
 ## [v13.8.0] - 2026-06-27
 

@@ -67,6 +67,16 @@ if ($script:ApiModulePath -and (Test-Path -LiteralPath $script:ApiModulePath)) {
         $script:ApiModuleLoadError = $_.Exception.Message
     }
 }
+$script:ExternalModulePath = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'Tools\JD2ExternalEngines.psm1' } else { $null }
+$script:ExternalModuleLoaded = $false
+if ($script:ExternalModulePath -and (Test-Path -LiteralPath $script:ExternalModulePath)) {
+    try {
+        Import-Module -Name $script:ExternalModulePath -Force -ErrorAction Stop
+        $script:ExternalModuleLoaded = $true
+    } catch {
+        $script:ExternalModuleLoadError = $_.Exception.Message
+    }
+}
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -184,6 +194,7 @@ $script:LiveCaptchaJob = $null
 $script:LiveCaptchaBitmap = $null
 $script:LiveQueueState = @{}
 $script:LiveQueueNotificationPrimed = $false
+$script:LiveQueuePersistenceRestored = $false
 $script:ToastWindows = New-Object System.Collections.Generic.List[object]
 $script:ToastsEnabled = $false
 
@@ -2956,7 +2967,7 @@ $StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Wind
 $PageDashboard    = New-PagePanel -CanvasHeight 930; [void]$MainPanel.Controls.Add($PageDashboard)
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
-$PageLiveControl  = New-PagePanel -CanvasHeight 1140; [void]$MainPanel.Controls.Add($PageLiveControl)
+$PageLiveControl  = New-PagePanel -CanvasHeight 1370; [void]$MainPanel.Controls.Add($PageLiveControl)
 $PageAccounts     = New-PagePanel -CanvasHeight 660; [void]$MainPanel.Controls.Add($PageAccounts)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 970; [void]$MainPanel.Controls.Add($PageTheme)
@@ -3175,7 +3186,20 @@ $LiveQueueGrid.RowTemplate.Height = 28
 [void]$LiveQueueGrid.Columns.Add("ETA", "ETA"); $LiveQueueGrid.Columns["ETA"].AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
 [void]$LiveQueueSurface.Controls.Add($LiveQueueGrid)
 
-$LiveCaptchaSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 856)) -Size (New-Object System.Drawing.Size(1040, 220)) -Tag "Callout"
+$LiveExternalSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 856)) -Size (New-Object System.Drawing.Size(1040, 220)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $LiveExternalSurface -Text "External fallback lanes" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $LiveExternalSurface -Text "Use yt-dlp or aria2c when a plain URL needs another downloader. FlareSolverr can solve a protected URL and return its request target." -Location (New-Object System.Drawing.Point(24, 46)) -Size (New-Object System.Drawing.Size(920, 20)) -AutoSize $false -Tag "BodyMuted")
+$TxtExternalUrl = New-TextBox -Parent $LiveExternalSurface -Location (New-Object System.Drawing.Point(24, 78)) -Size (New-Object System.Drawing.Size(560, 32)) -Tag "Input"
+$TxtExternalOutput = New-TextBox -Parent $LiveExternalSurface -Location (New-Object System.Drawing.Point(600, 78)) -Size (New-Object System.Drawing.Size(280, 32)) -Tag "Input"
+$BtnExternalYtDlp = New-Button -Parent $LiveExternalSurface -Text "Run yt-dlp" -Location (New-Object System.Drawing.Point(24, 122)) -Size (New-Object System.Drawing.Size(126, 32)) -Tag "SecondaryButton"
+$BtnExternalAria2 = New-Button -Parent $LiveExternalSurface -Text "Run aria2c" -Location (New-Object System.Drawing.Point(160, 122)) -Size (New-Object System.Drawing.Size(126, 32)) -Tag "SecondaryButton"
+$LblExternalStatus = New-Label -Parent $LiveExternalSurface -Text "External tools are optional and run hidden as separate processes." -Location (New-Object System.Drawing.Point(304, 128)) -Size (New-Object System.Drawing.Size(700, 20)) -AutoSize $false -Tag "BodyMuted"
+[void](New-Label -Parent $LiveExternalSurface -Text "FlareSolverr endpoint" -Location (New-Object System.Drawing.Point(24, 172)) -Size (New-Object System.Drawing.Size(160, 18)) -AutoSize $false -Tag "BodyMuted")
+$TxtFlareEndpoint = New-TextBox -Parent $LiveExternalSurface -Location (New-Object System.Drawing.Point(188, 168)) -Size (New-Object System.Drawing.Size(300, 32)) -Text "http://127.0.0.1:8191/v1" -Tag "Input"
+$BtnFlareSolve = New-Button -Parent $LiveExternalSurface -Text "Solve URL" -Location (New-Object System.Drawing.Point(504, 168)) -Size (New-Object System.Drawing.Size(120, 32)) -Tag "SecondaryButton"
+$LblFlareStatus = New-Label -Parent $LiveExternalSurface -Text "Optional local FlareSolverr service." -Location (New-Object System.Drawing.Point(640, 174)) -Size (New-Object System.Drawing.Size(360, 18)) -AutoSize $false -Tag "BodyMuted"
+
+$LiveCaptchaSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 1092)) -Size (New-Object System.Drawing.Size(1040, 220)) -Tag "Callout"
 [void](New-Label -Parent $LiveCaptchaSurface -Text "Captcha attention" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
 $LiveCaptchaBadge = New-Badge -Parent $LiveCaptchaSurface -Text "No pending captcha" -Location (New-Object System.Drawing.Point(780, 18)) -Size (New-Object System.Drawing.Size(196, 28)) -Tag "BadgeSuccess"
 $LiveCaptchaDetail = New-Label -Parent $LiveCaptchaSurface -Text "Captcha prompts from JDownloader appear here while the app stays in the tray." -Location (New-Object System.Drawing.Point(24, 50)) -Size (New-Object System.Drawing.Size(690, 22)) -AutoSize $false -Tag "BodyMuted"
@@ -3561,6 +3585,100 @@ function Invoke-LiveQueueEvents {
     $script:LiveQueueNotificationPrimed = $true
 }
 
+function Get-LiveQueuePersistencePath {
+    return (Join-Path $WorkDir 'queue-persistence.dpapi')
+}
+
+function Save-LiveQueuePersistence {
+    param($Queue)
+    if (-not $Queue) { return }
+    $active = @($Queue.Links | Where-Object {
+        $url = [string](Get-LiveLinkProperty -Link $_ -Name 'url' -Default '')
+        $finished = ConvertTo-SafeBool (Get-LiveLinkProperty -Link $_ -Name 'finished' -Default $false)
+        -not [string]::IsNullOrWhiteSpace($url) -and -not $finished
+    } | ForEach-Object {
+        [ordered]@{
+            Url = [string](Get-LiveLinkProperty -Link $_ -Name 'url' -Default '')
+            Name = [string](Get-LiveLinkProperty -Link $_ -Name 'name' -Default '')
+            Host = [string](Get-LiveLinkProperty -Link $_ -Name 'host' -Default '')
+        }
+    })
+    $path = Get-LiveQueuePersistencePath
+    if ($active.Count -eq 0) {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+        return
+    }
+    try {
+        if (-not (Test-Path -LiteralPath $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+        $payload = [ordered]@{ Saved = (Get-Date).ToString('o'); Links = $active } | ConvertTo-Json -Depth 8
+        $protected = Protect-SettingsValue -PlainText $payload
+        $tmp = "$path.tmp"
+        Set-Content -LiteralPath $tmp -Value $protected -Encoding UTF8 -ErrorAction Stop
+        Move-Item -LiteralPath $tmp -Destination $path -Force -ErrorAction Stop
+    } catch { Log-Status "Could not persist the active queue for reconnect recovery." "WARN" }
+}
+
+function Restore-LiveQueuePersistence {
+    param($Queue)
+    if ($script:LiveQueuePersistenceRestored -or -not $script:LiveApiClient) { return }
+    $script:LiveQueuePersistenceRestored = $true
+    $path = Get-LiveQueuePersistencePath
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding UTF8 -ErrorAction Stop
+        $stored = (Unprotect-SettingsValue -CipherText $raw) | ConvertFrom-Json -ErrorAction Stop
+        $currentUrls = @($Queue.Links | ForEach-Object { [string](Get-LiveLinkProperty -Link $_ -Name 'url' -Default '') } | Where-Object { $_ })
+        $missing = @($stored.Links | ForEach-Object { [string]$_.Url } | Where-Object { $_ -and $currentUrls -notcontains $_ } | Select-Object -Unique)
+        if ($missing.Count -gt 0) {
+            Add-JD2Links -Client $script:LiveApiClient -Links $missing -PackageName 'UM reconnect recovery' -AutoStart $false | Out-Null
+            Log-Status "Re-enqueued $($missing.Count) active link(s) saved from the previous live session." "SUCCESS"
+            Show-ToastNotification -Text "$($missing.Count) saved link(s) restored." -Type SUCCESS
+        }
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    } catch {
+        Log-Status "Queue reconnect recovery could not be completed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Start-ExternalFallbackFromControls {
+    param([ValidateSet('yt-dlp', 'aria2c')][string]$Engine)
+    if (-not $script:ExternalModuleLoaded) {
+        Log-Status "External engine module could not be loaded." "WARN"
+        return
+    }
+    $url = $TxtExternalUrl.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($url)) { Log-Status "Enter a URL for the external fallback lane first." "WARN"; return }
+    $output = $TxtExternalOutput.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($output)) {
+        $output = if ($TxtDl -and -not [string]::IsNullOrWhiteSpace($TxtDl.Text)) { $TxtDl.Text.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Downloads' }
+    }
+    try {
+        $process = Start-JD2ExternalDownload -Engine $Engine -Url $url -OutputDirectory $output
+        $LblExternalStatus.Text = "$Engine started (PID $($process.Id)); output: $output"
+        Log-Status "$Engine fallback started for $url." "SUCCESS"
+        Show-ToastNotification -Text "$Engine fallback started." -Type SUCCESS
+    } catch {
+        $LblExternalStatus.Text = "$Engine unavailable or failed to start."
+        Log-Status "$Engine fallback failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Invoke-FlareSolverrFromControls {
+    if (-not $script:ExternalModuleLoaded) { Log-Status "External engine module could not be loaded." "WARN"; return }
+    $url = $TxtExternalUrl.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($url)) { Log-Status "Enter a URL before asking FlareSolverr to solve it." "WARN"; return }
+    try {
+        $result = Invoke-JD2FlareSolverr -Endpoint $TxtFlareEndpoint.Text.Trim() -Url $url
+        if (-not [string]::IsNullOrWhiteSpace($result.Request)) { $TxtExternalUrl.Text = $result.Request }
+        $LblFlareStatus.Text = "Solved; $($result.Cookies.Count) cookie(s), user-agent returned."
+        Log-Status "FlareSolverr returned a solved request. Review it before using a fallback lane." "SUCCESS"
+        Show-ToastNotification -Text "FlareSolverr returned a solved request." -Type SUCCESS
+    } catch {
+        $LblFlareStatus.Text = "FlareSolverr request failed."
+        Log-Status "FlareSolverr request failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
 function Refresh-LiveApiQueue {
     param([switch]$ForceReconnect)
     if ($script:LiveApiBusy) { return }
@@ -3573,9 +3691,12 @@ function Refresh-LiveApiQueue {
             }
             $script:LiveQueueState = @{}
             $script:LiveQueueNotificationPrimed = $false
+            $script:LiveQueuePersistenceRestored = $false
             $script:LiveApiClient = New-LiveApiClientFromControls
         }
         $queue = Get-JD2Queue -Client $script:LiveApiClient
+        Restore-LiveQueuePersistence -Queue $queue
+        Save-LiveQueuePersistence -Queue $queue
         Update-LiveQueueGrid -Queue $queue
         Invoke-LiveQueueEvents -Queue $queue
         $LiveHeroBadge.Text = "Connected"
@@ -4580,18 +4701,24 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $TxtLivePackage -Name "LinkGrabber package name" -Description "Optional package name for the links sent to JDownloader." -TabIndex 12
     Set-ControlMetadata -Control $BtnLiveAddLinks -Name "Send links to LinkGrabber" -Description "Forward the pasted URLs to JDownloader LinkGrabber." -TabIndex 13
     Set-ControlMetadata -Control $LiveQueueGrid -Name "JDownloader download queue" -Description "Shows current links, status, progress, speed, and estimated time." -TabIndex 14
-    Set-ControlMetadata -Control $TxtLiveCaptchaAnswer -Name "Captcha answer" -Description "Enter the answer for the pending JDownloader captcha prompt." -TabIndex 15
-    Set-ControlMetadata -Control $BtnLiveCaptchaSolve -Name "Submit captcha answer" -Description "Submit the captcha answer to JDownloader." -TabIndex 16
-    Set-ControlMetadata -Control $BtnLiveCaptchaSkip -Name "Skip captcha" -Description "Skip the current JDownloader captcha prompt." -TabIndex 17
-    Set-ControlMetadata -Control $BtnLiveCaptchaRefresh -Name "Refresh captcha prompts" -Description "Refresh the pending JDownloader captcha prompt." -TabIndex 18
-    Set-ControlMetadata -Control $AccountGrid -Name "JDownloader account list" -Description "Shows configured hoster accounts without exposing passwords." -TabIndex 19
-    Set-ControlMetadata -Control $TxtAccountHoster -Name "Premium hoster" -Description "Enter the hoster identifier accepted by JDownloader." -TabIndex 20
-    Set-ControlMetadata -Control $TxtAccountUsername -Name "Account username" -Description "Enter the premium hoster account username." -TabIndex 21
-    Set-ControlMetadata -Control $TxtAccountPassword -Name "Account password" -Description "Enter the password for this add-account action." -TabIndex 22
-    Set-ControlMetadata -Control $BtnAccountAdd -Name "Add account" -Description "Send the account credentials to JDownloader." -TabIndex 23
-    Set-ControlMetadata -Control $BtnAccountEnable -Name "Enable selected accounts" -Description "Enable the selected JDownloader accounts." -TabIndex 24
-    Set-ControlMetadata -Control $BtnAccountDisable -Name "Disable selected accounts" -Description "Disable the selected JDownloader accounts." -TabIndex 25
-    Set-ControlMetadata -Control $BtnAccountRemove -Name "Remove selected accounts" -Description "Remove the selected JDownloader accounts after confirmation." -TabIndex 26
+    Set-ControlMetadata -Control $TxtExternalUrl -Name "External fallback URL" -Description "Enter an HTTP, HTTPS, FTP, or magnet URL for yt-dlp or aria2c." -TabIndex 15
+    Set-ControlMetadata -Control $TxtExternalOutput -Name "External fallback output folder" -Description "Choose where yt-dlp or aria2c should write the downloaded file." -TabIndex 16
+    Set-ControlMetadata -Control $BtnExternalYtDlp -Name "Run yt-dlp fallback" -Description "Start a hidden yt-dlp fallback process for the external URL." -TabIndex 17
+    Set-ControlMetadata -Control $BtnExternalAria2 -Name "Run aria2c fallback" -Description "Start a hidden aria2c fallback process with split connections." -TabIndex 18
+    Set-ControlMetadata -Control $TxtFlareEndpoint -Name "FlareSolverr endpoint" -Description "Enter the optional FlareSolverr HTTP(S) endpoint used to solve a protected URL." -TabIndex 19
+    Set-ControlMetadata -Control $BtnFlareSolve -Name "Solve URL with FlareSolverr" -Description "Ask FlareSolverr to solve the external URL and return its request target and cookies." -TabIndex 20
+    Set-ControlMetadata -Control $TxtLiveCaptchaAnswer -Name "Captcha answer" -Description "Enter the answer for the pending JDownloader captcha prompt." -TabIndex 21
+    Set-ControlMetadata -Control $BtnLiveCaptchaSolve -Name "Submit captcha answer" -Description "Submit the captcha answer to JDownloader." -TabIndex 22
+    Set-ControlMetadata -Control $BtnLiveCaptchaSkip -Name "Skip captcha" -Description "Skip the current JDownloader captcha prompt." -TabIndex 23
+    Set-ControlMetadata -Control $BtnLiveCaptchaRefresh -Name "Refresh captcha prompts" -Description "Refresh the pending JDownloader captcha prompt." -TabIndex 24
+    Set-ControlMetadata -Control $AccountGrid -Name "JDownloader account list" -Description "Shows configured hoster accounts without exposing passwords." -TabIndex 25
+    Set-ControlMetadata -Control $TxtAccountHoster -Name "Premium hoster" -Description "Enter the hoster identifier accepted by JDownloader." -TabIndex 26
+    Set-ControlMetadata -Control $TxtAccountUsername -Name "Account username" -Description "Enter the premium hoster account username." -TabIndex 27
+    Set-ControlMetadata -Control $TxtAccountPassword -Name "Account password" -Description "Enter the password for this add-account action." -TabIndex 28
+    Set-ControlMetadata -Control $BtnAccountAdd -Name "Add account" -Description "Send the account credentials to JDownloader." -TabIndex 29
+    Set-ControlMetadata -Control $BtnAccountEnable -Name "Enable selected accounts" -Description "Enable the selected JDownloader accounts." -TabIndex 30
+    Set-ControlMetadata -Control $BtnAccountDisable -Name "Disable selected accounts" -Description "Disable the selected JDownloader accounts." -TabIndex 31
+    Set-ControlMetadata -Control $BtnAccountRemove -Name "Remove selected accounts" -Description "Remove the selected JDownloader accounts after confirmation." -TabIndex 32
 }
 
 # --- Themes Page ---
@@ -5766,6 +5893,9 @@ $TxtLiveEndpoint.Add_TextChanged({ Update-WorkspaceState })
 $TxtLiveDevice.Add_TextChanged({ Update-WorkspaceState })
 $BtnLiveConnect.Add_Click({ Refresh-LiveApiQueue -ForceReconnect; Refresh-LiveCaptcha })
 $BtnLiveRefresh.Add_Click({ Refresh-LiveApiQueue; Refresh-LiveCaptcha })
+$BtnExternalYtDlp.Add_Click({ Start-ExternalFallbackFromControls -Engine 'yt-dlp' })
+$BtnExternalAria2.Add_Click({ Start-ExternalFallbackFromControls -Engine 'aria2c' })
+$BtnFlareSolve.Add_Click({ Invoke-FlareSolverrFromControls })
 $BtnLiveStart.Add_Click({ Invoke-LiveApiAction -Action "Start" })
 $BtnLivePause.Add_Click({ Invoke-LiveApiAction -Action "Pause" })
 $BtnLiveStop.Add_Click({ Invoke-LiveApiAction -Action "Stop" })
@@ -5895,6 +6025,12 @@ $ToolTip.SetToolTip($TxtLivePassword, "Password is cleared after a successful My
 $ToolTip.SetToolTip($TxtLiveDevice, "Optional MyJDownloader device name or id. Leave blank when only one device is registered.")
 $ToolTip.SetToolTip($BtnLiveConnect, "Connect to the configured JDownloader API endpoint.")
 $ToolTip.SetToolTip($BtnLiveRefresh, "Refresh the download queue and connection status.")
+$ToolTip.SetToolTip($TxtExternalUrl, "Enter an HTTP, HTTPS, FTP, or magnet URL for an external fallback lane.")
+$ToolTip.SetToolTip($TxtExternalOutput, "Folder used by yt-dlp or aria2c; leave blank to use the selected download folder.")
+$ToolTip.SetToolTip($BtnExternalYtDlp, "Run yt-dlp as a hidden fallback downloader.")
+$ToolTip.SetToolTip($BtnExternalAria2, "Run aria2c with 16 connections and 16 segments as a hidden fallback downloader.")
+$ToolTip.SetToolTip($TxtFlareEndpoint, "Optional local FlareSolverr endpoint, usually http://127.0.0.1:8191/v1.")
+$ToolTip.SetToolTip($BtnFlareSolve, "Ask FlareSolverr to solve the URL and place the returned request target in the URL field.")
 $ToolTip.SetToolTip($BtnLiveStart, "Start all eligible JDownloader downloads.")
 $ToolTip.SetToolTip($BtnLivePause, "Pause the JDownloader download controller.")
 $ToolTip.SetToolTip($BtnLiveStop, "Stop the JDownloader download controller.")

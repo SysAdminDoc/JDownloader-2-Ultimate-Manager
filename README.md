@@ -74,6 +74,8 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Starts, pauses, or stops the download controller without opening JDownloader's main window
 - Sends one or more pasted URLs directly to LinkGrabber without clipboard polling
 - Surfaces pending captcha prompts with the supplied image, answer, submit, and skip actions
+- Saves active queue URLs with DPAPI protection and re-enqueues missing links after a reconnect
+- Provides optional hidden yt-dlp and aria2c fallback lanes plus a FlareSolverr solve helper
 
 ### 7. Account Manager
 - Lists premium hoster accounts already configured in JDownloader
@@ -150,6 +152,7 @@ Use PowerShell 7+ on Linux to inspect or update a JDownloader cfg directory with
 - Connect to the default local endpoint or enter another HTTP endpoint
 - Refresh the queue, use controller actions, and send newline-separated links to LinkGrabber
 - When a captcha is waiting, enter the answer in the **Captcha attention** panel or skip it
+- Use **External fallback lanes** for a URL that needs yt-dlp or aria2c; the optional FlareSolverr helper returns a solved request target and cookies for review
 
 ### Accounts
 - Open **Accounts** after connecting to the configured JDownloader endpoint
