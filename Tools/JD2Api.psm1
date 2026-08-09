@@ -11,8 +11,15 @@ function New-JD2ApiClient {
         [ValidateRange(1, 120)]
         [int]$TimeoutSec = 8,
         [System.Collections.IDictionary]$Headers,
-        [scriptblock]$RequestInvoker
+        [scriptblock]$RequestInvoker,
+        [string]$AppKey = "https://github.com/SysAdminDoc/JDownloader-2-Ultimate-Manager",
+        [string]$DeviceId,
+        [string]$DeviceName
     )
+
+    if ($Mode -eq "MyJDownloader" -and ([string]::IsNullOrWhiteSpace($BaseUrl) -or $BaseUrl -eq "http://127.0.0.1:3128")) {
+        $BaseUrl = "https://api.jdownloader.org"
+    }
 
     if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
         throw "JDownloader API endpoint cannot be empty."
@@ -44,6 +51,18 @@ function New-JD2ApiClient {
         TimeoutSec      = $TimeoutSec
         Headers         = $headerTable
         RequestInvoker  = $RequestInvoker
+        AppKey          = $AppKey
+        Email           = $null
+        DeviceId        = $DeviceId
+        DeviceName      = $DeviceName
+        Devices         = @()
+        LoginSecret     = $null
+        DeviceSecret    = $null
+        ServerEncryptionToken = $null
+        DeviceEncryptionToken = $null
+        SessionToken    = $null
+        RegainToken     = $null
+        Connected       = $false
         RequestId       = [long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
     }
 }
@@ -64,6 +83,301 @@ function ConvertTo-JD2ApiParameter {
     } catch {
         throw "Could not serialize a JDownloader API parameter: $($_.Exception.Message)"
     }
+}
+
+function Get-JD2SecureStringText {
+    param([System.Security.SecureString]$Value)
+    if (-not $Value) { return "" }
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+}
+
+function Get-JD2Sha256Bytes {
+    param([byte[]]$Bytes)
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { return $hash.ComputeHash($Bytes) }
+    finally { $hash.Dispose() }
+}
+
+function ConvertTo-JD2Hex {
+    param([byte[]]$Bytes)
+    return (($Bytes | ForEach-Object { $_.ToString("x2") }) -join "")
+}
+
+function ConvertFrom-JD2Hex {
+    param([string]$Hex)
+    if ([string]::IsNullOrWhiteSpace($Hex) -or ($Hex.Length % 2) -ne 0 -or $Hex -notmatch "^[0-9a-fA-F]+$") {
+        throw "JDownloader returned an invalid hexadecimal token."
+    }
+    $bytes = New-Object byte[] ($Hex.Length / 2)
+    for ($index = 0; $index -lt $bytes.Length; $index++) {
+        $bytes[$index] = [Convert]::ToByte($Hex.Substring($index * 2, 2), 16)
+    }
+    return $bytes
+}
+
+function Join-JD2Bytes {
+    param([byte[]]$Left, [byte[]]$Right)
+    $joined = New-Object byte[] ($Left.Length + $Right.Length)
+    [Buffer]::BlockCopy($Left, 0, $joined, 0, $Left.Length)
+    [Buffer]::BlockCopy($Right, 0, $joined, $Left.Length, $Right.Length)
+    return $joined
+}
+
+function New-JD2MyJdSecret {
+    param(
+        [Parameter(Mandatory)][string]$Email,
+        [Parameter(Mandatory)][System.Security.SecureString]$Password,
+        [Parameter(Mandatory)][string]$Domain
+    )
+    $passwordText = Get-JD2SecureStringText -Value $Password
+    try {
+        $material = [Text.Encoding]::UTF8.GetBytes($Email.Trim().ToLowerInvariant() + $passwordText + $Domain.ToLowerInvariant())
+        return Get-JD2Sha256Bytes -Bytes $material
+    } finally {
+        $passwordText = $null
+    }
+}
+
+function Get-JD2HmacHex {
+    param([Parameter(Mandatory)][byte[]]$Key, [Parameter(Mandatory)][string]$Text)
+    $hmac = New-Object Security.Cryptography.HMACSHA256(,$Key)
+    try { return ConvertTo-JD2Hex -Bytes ($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))) }
+    finally { $hmac.Dispose() }
+}
+
+function Protect-JD2MyJdPayload {
+    param([Parameter(Mandatory)][byte[]]$Token, [Parameter(Mandatory)][string]$PlainText)
+    if ($Token.Length -ne 32) { throw "JDownloader encryption token must be 32 bytes." }
+    $aes = [Security.Cryptography.Aes]::Create()
+    try {
+        $aes.Mode = [Security.Cryptography.CipherMode]::CBC
+        $aes.Padding = [Security.Cryptography.PaddingMode]::PKCS7
+        $aes.KeySize = 128
+        $aes.BlockSize = 128
+        $aes.Key = $Token[16..31]
+        $aes.IV = $Token[0..15]
+        $bytes = [Text.Encoding]::UTF8.GetBytes($PlainText)
+        $cipher = $aes.CreateEncryptor().TransformFinalBlock($bytes, 0, $bytes.Length)
+        return [Convert]::ToBase64String($cipher)
+    } finally { $aes.Dispose() }
+}
+
+function Unprotect-JD2MyJdPayload {
+    param([Parameter(Mandatory)][byte[]]$Token, [Parameter(Mandatory)][string]$CipherText)
+    if ($Token.Length -ne 32) { throw "JDownloader encryption token must be 32 bytes." }
+    try { $cipher = [Convert]::FromBase64String($CipherText) } catch { throw "JDownloader returned an invalid encrypted response." }
+    $aes = [Security.Cryptography.Aes]::Create()
+    try {
+        $aes.Mode = [Security.Cryptography.CipherMode]::CBC
+        $aes.Padding = [Security.Cryptography.PaddingMode]::PKCS7
+        $aes.KeySize = 128
+        $aes.BlockSize = 128
+        $aes.Key = $Token[16..31]
+        $aes.IV = $Token[0..15]
+        $plain = $aes.CreateDecryptor().TransformFinalBlock($cipher, 0, $cipher.Length)
+        return [Text.Encoding]::UTF8.GetString($plain)
+    } catch { throw "JDownloader returned an undecryptable response: $($_.Exception.Message)" }
+    finally { $aes.Dispose() }
+}
+
+function Invoke-JD2MyJdTransport {
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][string]$Uri,
+        [ValidateSet("GET", "POST")][string]$Method = "GET",
+        [string]$Body,
+        [string]$ContentType
+    )
+    $headers = @{}
+    if ($Client.Headers) {
+        foreach ($key in $Client.Headers.Keys) { $headers[[string]$key] = [string]$Client.Headers[$key] }
+    }
+    try {
+        if ($Client.RequestInvoker) {
+            return & $Client.RequestInvoker ([pscustomobject]@{
+                Uri         = $Uri
+                Method      = $Method
+                Headers     = $headers
+                Body        = $Body
+                ContentType = $ContentType
+            })
+        }
+        if ($Method -eq "POST") {
+            return Invoke-WebRequest -Uri $Uri -Method Post -Headers $headers -Body $Body -ContentType $ContentType -UseBasicParsing -TimeoutSec $Client.TimeoutSec -ErrorAction Stop
+        }
+        return Invoke-WebRequest -Uri $Uri -Method Get -Headers $headers -UseBasicParsing -TimeoutSec $Client.TimeoutSec -ErrorAction Stop
+    } catch {
+        throw "JDownloader MyJDownloader transport failed: $($_.Exception.Message)"
+    }
+}
+
+function Get-JD2MyJdRequestId {
+    param([Parameter(Mandatory)]$Client)
+    $requestId = Get-JD2ApiRequestId
+    if ($requestId -le [long]$Client.RequestId) { $requestId = [long]$Client.RequestId + 1 }
+    $Client.RequestId = $requestId
+    return $requestId
+}
+
+function Invoke-JD2MyJdRequest {
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][string]$Path,
+        [System.Collections.IDictionary]$QueryParameters,
+        [object[]]$Parameters,
+        [switch]$DeviceRequest
+    )
+    $requestId = Get-JD2MyJdRequestId -Client $Client
+    $requestUri = $null
+    $responseToken = $null
+    $method = "GET"
+    $body = $null
+    $contentType = $null
+
+    if ($DeviceRequest) {
+        if (-not $Client.Connected -or [string]::IsNullOrWhiteSpace([string]$Client.SessionToken)) {
+            throw "MyJDownloader is not connected."
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$Client.DeviceId)) {
+            throw "Select a MyJDownloader device before making a request."
+        }
+        $serializedParameters = @()
+        foreach ($parameter in @($Parameters)) { $serializedParameters += ConvertTo-JD2ApiParameter -Value $parameter }
+        $requestPayload = [ordered]@{
+            apiVer = 1
+            url    = $Path
+            params = $serializedParameters
+            rid    = $requestId
+        }
+        $body = Protect-JD2MyJdPayload -Token $Client.DeviceEncryptionToken -PlainText ($requestPayload | ConvertTo-Json -Depth 100 -Compress)
+        $requestUri = "{0}/t_{1}_{2}{3}" -f $Client.BaseUrl.TrimEnd("/"), $Client.SessionToken, $Client.DeviceId, $Path
+        $responseToken = $Client.DeviceEncryptionToken
+        $method = "POST"
+        $contentType = "application/aesjson-jd; charset=utf-8"
+    } else {
+        $parts = New-Object System.Collections.Generic.List[string]
+        if ($QueryParameters) {
+            foreach ($key in $QueryParameters.Keys) {
+                $queryPart = "{0}={1}" -f ([string]$key), ([Uri]::EscapeDataString([string]$QueryParameters[$key]))
+                [void]$parts.Add($queryPart)
+            }
+        }
+        [void]$parts.Add("rid={0}" -f $requestId)
+        $unsigned = "{0}?{1}" -f $Path, ($parts -join "&")
+        $signatureKey = if ($Client.ServerEncryptionToken) { $Client.ServerEncryptionToken } else { $Client.LoginSecret }
+        if (-not $signatureKey) { throw "MyJDownloader authentication has not been initialized." }
+        $requestUri = "{0}{1}&signature={2}" -f $Client.BaseUrl.TrimEnd("/"), $unsigned, (Get-JD2HmacHex -Key $signatureKey -Text $unsigned)
+        $responseToken = if ($Client.ServerEncryptionToken) { $Client.ServerEncryptionToken } else { $Client.LoginSecret }
+    }
+
+    $response = Invoke-JD2MyJdTransport -Client $Client -Uri $requestUri -Method $method -Body $body -ContentType $contentType
+    $statusCode = 200
+    if ($response -and $response.PSObject.Properties.Name -contains "StatusCode") { $statusCode = [int]$response.StatusCode }
+    $content = Get-JD2ApiResponseContent -Response $response
+    if ($statusCode -ne 200) { throw ("JDownloader MyJDownloader API returned HTTP {0}: {1}" -f $statusCode, $content) }
+    $plainText = Unprotect-JD2MyJdPayload -Token $responseToken -CipherText $content
+    try { $payload = $plainText | ConvertFrom-Json -ErrorAction Stop } catch { throw "JDownloader returned invalid MyJDownloader JSON: $($_.Exception.Message)" }
+    if ($payload.PSObject.Properties.Name -contains "rid" -and [long]$payload.rid -ne $requestId) {
+        throw "JDownloader returned a mismatched MyJDownloader request id."
+    }
+    return $payload
+}
+
+function Connect-JD2MyJDownloader {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][string]$Email,
+        [Parameter(Mandatory)][System.Security.SecureString]$Password,
+        [string]$DeviceId,
+        [string]$DeviceName
+    )
+    if ($Client.Mode -ne "MyJDownloader") { throw "The API client is not configured for MyJDownloader." }
+    if ([string]::IsNullOrWhiteSpace($Email)) { throw "MyJDownloader email cannot be empty." }
+    if (-not $Password) { throw "MyJDownloader password cannot be empty." }
+    $Client.Email = $Email.Trim().ToLowerInvariant()
+    $Client.DeviceId = if ([string]::IsNullOrWhiteSpace($DeviceId)) { $Client.DeviceId } else { $DeviceId.Trim() }
+    $Client.DeviceName = if ([string]::IsNullOrWhiteSpace($DeviceName)) { $Client.DeviceName } else { $DeviceName.Trim() }
+    $Client.LoginSecret = New-JD2MyJdSecret -Email $Client.Email -Password $Password -Domain "server"
+    $Client.DeviceSecret = New-JD2MyJdSecret -Email $Client.Email -Password $Password -Domain "device"
+    $Client.ServerEncryptionToken = $null
+    $Client.DeviceEncryptionToken = $null
+    $Client.Connected = $false
+
+    $connectResponse = Invoke-JD2MyJdRequest -Client $Client -Path "/my/connect" -QueryParameters ([ordered]@{ email = $Client.Email; appkey = $Client.AppKey })
+    if (-not $connectResponse.sessiontoken -or -not $connectResponse.regaintoken) { throw "MyJDownloader did not return a session token." }
+    $Client.SessionToken = [string]$connectResponse.sessiontoken
+    $Client.RegainToken = [string]$connectResponse.regaintoken
+    $sessionBytes = ConvertFrom-JD2Hex -Hex $Client.SessionToken
+    $Client.ServerEncryptionToken = Get-JD2Sha256Bytes -Bytes (Join-JD2Bytes -Left $Client.LoginSecret -Right $sessionBytes)
+    $Client.DeviceEncryptionToken = Get-JD2Sha256Bytes -Bytes (Join-JD2Bytes -Left $Client.DeviceSecret -Right $sessionBytes)
+    $Client.Connected = $true
+    $devices = @(Get-JD2MyJDownloaderDevices -Client $Client)
+    $Client.Devices = $devices
+
+    $selected = $null
+    if (-not [string]::IsNullOrWhiteSpace([string]$Client.DeviceId)) { $selected = $devices | Where-Object { [string]$_.id -eq [string]$Client.DeviceId } | Select-Object -First 1 }
+    if (-not $selected -and -not [string]::IsNullOrWhiteSpace([string]$Client.DeviceName)) { $selected = $devices | Where-Object { [string]$_.name -eq [string]$Client.DeviceName } | Select-Object -First 1 }
+    if (-not $selected -and $devices.Count -eq 1) { $selected = $devices[0] }
+    if ($selected) {
+        $Client.DeviceId = [string]$selected.id
+        $Client.DeviceName = [string]$selected.name
+    } else {
+        $Client.DeviceId = $null
+    }
+    return $devices
+}
+
+function Get-JD2MyJDownloaderDevices {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Client)
+    if (-not $Client.Connected) { throw "MyJDownloader is not connected." }
+    $response = Invoke-JD2MyJdRequest -Client $Client -Path "/my/listdevices" -QueryParameters ([ordered]@{ sessiontoken = $Client.SessionToken })
+    if ($response.PSObject.Properties.Name -contains "list") { return @($response.list) }
+    if ($response.PSObject.Properties.Name -contains "data") { return @($response.data) }
+    return @()
+}
+
+function Set-JD2MyJDownloaderDevice {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [string]$DeviceId,
+        [string]$DeviceName
+    )
+    if (-not $Client.Connected) { throw "MyJDownloader is not connected." }
+    $devices = @(if ($Client.Devices) { $Client.Devices } else { Get-JD2MyJDownloaderDevices -Client $Client })
+    $selected = if (-not [string]::IsNullOrWhiteSpace($DeviceId)) {
+        $devices | Where-Object { [string]$_.id -eq $DeviceId } | Select-Object -First 1
+    } else {
+        $devices | Where-Object { [string]$_.name -eq $DeviceName } | Select-Object -First 1
+    }
+    if (-not $selected) { throw "MyJDownloader device was not found." }
+    $Client.DeviceId = [string]$selected.id
+    $Client.DeviceName = [string]$selected.name
+    return $selected
+}
+
+function Disconnect-JD2MyJDownloader {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Client)
+    if ($Client.Mode -eq "MyJDownloader" -and $Client.Connected -and $Client.SessionToken) {
+        try { [void](Invoke-JD2MyJdRequest -Client $Client -Path "/my/disconnect" -QueryParameters ([ordered]@{ sessiontoken = $Client.SessionToken })) } catch {}
+    }
+    $Client.Email = $null
+    $Client.DeviceId = $null
+    $Client.DeviceName = $null
+    $Client.Devices = @()
+    $Client.LoginSecret = $null
+    $Client.DeviceSecret = $null
+    $Client.ServerEncryptionToken = $null
+    $Client.DeviceEncryptionToken = $null
+    $Client.SessionToken = $null
+    $Client.RegainToken = $null
+    $Client.Connected = $false
+    return $true
 }
 
 function New-JD2ApiRequestUri {
@@ -148,6 +462,22 @@ function Invoke-JD2ApiMethod {
         [Parameter(Mandatory)][string]$Method,
         [object[]]$Parameters
     )
+
+    if ($Client.Mode -eq "MyJDownloader") {
+        try {
+            if ($Namespace -notmatch "^[A-Za-z][A-Za-z0-9_-]*$") {
+                throw "Invalid JDownloader API namespace: $Namespace"
+            }
+            if ($Method -notmatch "^[A-Za-z][A-Za-z0-9_-]*$") {
+                throw "Invalid JDownloader API method: $Method"
+            }
+            $remotePayload = Invoke-JD2MyJdRequest -Client $Client -Path ("/{0}/{1}" -f $Namespace, $Method) -Parameters $Parameters -DeviceRequest
+            return ConvertFrom-JD2ApiResponse -Content ($remotePayload | ConvertTo-Json -Depth 100 -Compress)
+        } catch {
+            if ($_.Exception.Message -like "JDownloader API*") { throw }
+            throw "JDownloader API request failed ($Namespace/$Method): $($_.Exception.Message)"
+        }
+    }
 
     $requestUri = New-JD2ApiRequestUri -Client $Client -Namespace $Namespace -Method $Method -Parameters $Parameters
     $requestId = Get-JD2ApiRequestId
@@ -531,6 +861,10 @@ function Remove-JD2Accounts {
 
 Export-ModuleMember -Function @(
     "New-JD2ApiClient",
+    "Connect-JD2MyJDownloader",
+    "Get-JD2MyJDownloaderDevices",
+    "Set-JD2MyJDownloaderDevice",
+    "Disconnect-JD2MyJDownloader",
     "New-JD2ApiRequestUri",
     "Invoke-JD2ApiMethod",
     "Get-JD2Queue",

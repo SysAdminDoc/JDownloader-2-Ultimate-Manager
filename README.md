@@ -60,7 +60,8 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Full uninstall capability for complete removal of JDownloader 2  
 
 ### 6. Live Control & LinkGrabber
-- Connects to JDownloader's local JSON API at `http://127.0.0.1:3128` (or a configured HTTP endpoint)
+- Connects to JDownloader's local JSON API at `http://127.0.0.1:3128` or the encrypted MyJDownloader API for remote devices
+- MyJDownloader credentials are used only to establish the current session; the password is cleared after connection and never saved in workspace state
 - Displays the live download queue with status, progress, speed, and ETA
 - Starts, pauses, or stops the download controller without opening JDownloader's main window
 - Sends one or more pasted URLs directly to LinkGrabber without clipboard polling
@@ -119,8 +120,9 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Perform full uninstall  
 
 ### Live Control
-- Enable JDownloader's deprecated local API in Advanced Settings, then open **Live Control**
-- Connect to the default `http://127.0.0.1:3128` endpoint or enter another HTTP endpoint
+- For a local instance, enable JDownloader's deprecated local API in Advanced Settings and choose **Local API**
+- For a remote instance, choose **MyJDownloader**, enter the account email/password, and optionally enter a device name or id; the default endpoint is `https://api.jdownloader.org`
+- Connect to the default local endpoint or enter another HTTP endpoint
 - Refresh the queue, use controller actions, and send newline-separated links to LinkGrabber
 - When a captcha is waiting, enter the answer in the **Captcha attention** panel or skip it
 

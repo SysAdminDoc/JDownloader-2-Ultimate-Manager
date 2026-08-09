@@ -11,6 +11,7 @@ All notable changes to JDownloader-2-Ultimate-Manager will be documented in this
 - **Account Manager page** with account listing, add, enable, disable, and remove actions backed by JDownloader's local accounts API; credentials are not persisted by the manager.
 - **Bandwidth controls** with per-host concurrency enforcement, a global download cap, and daily off-peak Task Scheduler profiles that use the local API when available and atomic config-file fallback otherwise.
 - **WiX 5 MSI packaging** with a reproducible `Tools\Build-Msi.ps1` build, Start Menu shortcut, bundled runtime assets, major-upgrade handling, and removal of manager user data during uninstall.
+- **MyJDownloader remote control** with encrypted login/device transport, device selection, queue inspection, controller actions, LinkGrabber, captcha, and account API support; passwords are not persisted.
 
 ## [v13.8.0] - 2026-06-27
 

@@ -171,6 +171,7 @@ $script:IsBootstrapping = $true
 $script:ApplyInFlight = $false
 $script:LiveApiClient = $null
 $script:LiveApiEndpoint = "http://127.0.0.1:3128"
+$script:LiveApiConnectionKey = $null
 $script:LiveApiBusy = $false
 $script:LiveApiPollTimer = $null
 $script:LiveCaptchaJob = $null
@@ -2474,7 +2475,7 @@ $StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Wind
 $PageDashboard    = New-PagePanel -CanvasHeight 682; [void]$MainPanel.Controls.Add($PageDashboard)
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
-$PageLiveControl  = New-PagePanel -CanvasHeight 1030; [void]$MainPanel.Controls.Add($PageLiveControl)
+$PageLiveControl  = New-PagePanel -CanvasHeight 1140; [void]$MainPanel.Controls.Add($PageLiveControl)
 $PageAccounts     = New-PagePanel -CanvasHeight 660; [void]$MainPanel.Controls.Add($PageAccounts)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
@@ -2604,20 +2605,28 @@ function Layout-Dashboard {
 $LiveHero = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 136))
 [void](New-Label -Parent $LiveHero -Text "LIVE CONTROL" -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
 [void](New-Label -Parent $LiveHero -Text "Control JDownloader from one queue view" -Location (New-Object System.Drawing.Point(24, 44)) -Font (New-Object System.Drawing.Font("Segoe UI", 22, [System.Drawing.FontStyle]::Bold)) -Size (New-Object System.Drawing.Size(640, 38)) -AutoSize $false)
-[void](New-Label -Parent $LiveHero -Text "Connect to the local JSON API, inspect active downloads, start or pause the controller, and send links to LinkGrabber." -Location (New-Object System.Drawing.Point(24, 88)) -Size (New-Object System.Drawing.Size(670, 28)) -AutoSize $false -Tag "SubHeader")
+[void](New-Label -Parent $LiveHero -Text "Connect locally or through encrypted MyJDownloader access, inspect downloads, control the queue, and send links to LinkGrabber." -Location (New-Object System.Drawing.Point(24, 88)) -Size (New-Object System.Drawing.Size(710, 28)) -AutoSize $false -Tag "SubHeader")
 $LiveHeroBadge = New-Badge -Parent $LiveHero -Text "Not connected" -Location (New-Object System.Drawing.Point(812, 26)) -Size (New-Object System.Drawing.Size(164, 30)) -Tag "BadgeNeutral"
-[void](New-Label -Parent $LiveHero -Text "The endpoint stays local by default." -Location (New-Object System.Drawing.Point(782, 68)) -Size (New-Object System.Drawing.Size(210, 38)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $LiveHero -Text "Local API is the default. Remote sessions use MyJDownloader encryption." -Location (New-Object System.Drawing.Point(782, 68)) -Size (New-Object System.Drawing.Size(210, 38)) -AutoSize $false -Tag "BodyMuted")
 
-$LiveConnectionSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 154)) -Size (New-Object System.Drawing.Size(1040, 122)) -Tag "SurfaceAlt"
+$LiveConnectionSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 154)) -Size (New-Object System.Drawing.Size(1040, 200)) -Tag "SurfaceAlt"
 [void](New-Label -Parent $LiveConnectionSurface -Text "JDownloader API connection" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
-[void](New-Label -Parent $LiveConnectionSurface -Text "Enable JDownloader's deprecated local API in Advanced Settings before connecting." -Location (New-Object System.Drawing.Point(24, 44)) -Size (New-Object System.Drawing.Size(560, 18)) -AutoSize $false -Tag "BodyMuted")
-$TxtLiveEndpoint = New-TextBox -Parent $LiveConnectionSurface -Location (New-Object System.Drawing.Point(24, 70)) -Size (New-Object System.Drawing.Size(500, 34)) -Text $script:LiveApiEndpoint -Tag "Input"
-$BtnLiveConnect = New-Button -Parent $LiveConnectionSurface -Text "Connect" -Location (New-Object System.Drawing.Point(540, 70)) -Size (New-Object System.Drawing.Size(108, 34)) -Tag "PrimaryButton"
-$BtnLiveRefresh = New-Button -Parent $LiveConnectionSurface -Text "Refresh queue" -Location (New-Object System.Drawing.Point(660, 70)) -Size (New-Object System.Drawing.Size(132, 34)) -Tag "SecondaryButton"
+[void](New-Label -Parent $LiveConnectionSurface -Text "Choose a local API endpoint or a MyJDownloader device." -Location (New-Object System.Drawing.Point(24, 44)) -Size (New-Object System.Drawing.Size(760, 18)) -AutoSize $false -Tag "BodyMuted")
+$CboLiveMode = New-ComboBox -Parent $LiveConnectionSurface -Location (New-Object System.Drawing.Point(24, 70)) -Size (New-Object System.Drawing.Size(160, 34)) -Tag "Input" -Items @("Local API", "MyJDownloader") -SelectedIndex 0
+$TxtLiveEndpoint = New-TextBox -Parent $LiveConnectionSurface -Location (New-Object System.Drawing.Point(196, 70)) -Size (New-Object System.Drawing.Size(338, 34)) -Text $script:LiveApiEndpoint -Tag "Input"
+$BtnLiveConnect = New-Button -Parent $LiveConnectionSurface -Text "Connect" -Location (New-Object System.Drawing.Point(548, 70)) -Size (New-Object System.Drawing.Size(108, 34)) -Tag "PrimaryButton"
+$BtnLiveRefresh = New-Button -Parent $LiveConnectionSurface -Text "Refresh queue" -Location (New-Object System.Drawing.Point(668, 70)) -Size (New-Object System.Drawing.Size(132, 34)) -Tag "SecondaryButton"
 $LiveConnectionBadge = New-Badge -Parent $LiveConnectionSurface -Text "Offline" -Location (New-Object System.Drawing.Point(812, 72)) -Size (New-Object System.Drawing.Size(112, 28)) -Tag "BadgeNeutral"
 $LiveConnectionDetail = New-Label -Parent $LiveConnectionSurface -Text "No request made yet." -Location (New-Object System.Drawing.Point(812, 100)) -Size (New-Object System.Drawing.Size(194, 18)) -AutoSize $false -Tag "BodyMuted"
+[void](New-Label -Parent $LiveConnectionSurface -Text "MyJDownloader email" -Location (New-Object System.Drawing.Point(24, 112)) -Size (New-Object System.Drawing.Size(260, 18)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $LiveConnectionSurface -Text "Password" -Location (New-Object System.Drawing.Point(300, 112)) -Size (New-Object System.Drawing.Size(220, 18)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $LiveConnectionSurface -Text "Device name or id" -Location (New-Object System.Drawing.Point(536, 112)) -Size (New-Object System.Drawing.Size(264, 18)) -AutoSize $false -Tag "BodyMuted")
+$TxtLiveEmail = New-TextBox -Parent $LiveConnectionSurface -Location (New-Object System.Drawing.Point(24, 132)) -Size (New-Object System.Drawing.Size(260, 34)) -Tag "Input"
+$TxtLivePassword = New-TextBox -Parent $LiveConnectionSurface -Location (New-Object System.Drawing.Point(300, 132)) -Size (New-Object System.Drawing.Size(220, 34)) -Tag "Input"
+$TxtLivePassword.UseSystemPasswordChar = $true
+$TxtLiveDevice = New-TextBox -Parent $LiveConnectionSurface -Location (New-Object System.Drawing.Point(536, 132)) -Size (New-Object System.Drawing.Size(264, 34)) -Tag "Input"
 
-$LiveActionSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 294)) -Size (New-Object System.Drawing.Size(1040, 166))
+$LiveActionSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 372)) -Size (New-Object System.Drawing.Size(1040, 166))
 [void](New-Label -Parent $LiveActionSurface -Text "Controller actions and LinkGrabber" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
 $BtnLiveStart = New-Button -Parent $LiveActionSurface -Text "Start downloads" -Location (New-Object System.Drawing.Point(24, 52)) -Size (New-Object System.Drawing.Size(142, 34)) -Tag "SuccessButton"
 $BtnLivePause = New-Button -Parent $LiveActionSurface -Text "Pause downloads" -Location (New-Object System.Drawing.Point(178, 52)) -Size (New-Object System.Drawing.Size(142, 34)) -Tag "SecondaryButton"
@@ -2633,7 +2642,7 @@ $TxtLiveLinks.AcceptsReturn = $true
 $TxtLivePackage = New-TextBox -Parent $LiveActionSurface -Location (New-Object System.Drawing.Point(748, 124)) -Size (New-Object System.Drawing.Size(152, 30)) -Tag "Input"
 $BtnLiveAddLinks = New-Button -Parent $LiveActionSurface -Text "Send to LinkGrabber" -Location (New-Object System.Drawing.Point(912, 124)) -Size (New-Object System.Drawing.Size(104, 30)) -Tag "PrimaryButton"
 
-$LiveQueueSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 478)) -Size (New-Object System.Drawing.Size(1040, 282)) -Tag "Surface"
+$LiveQueueSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 556)) -Size (New-Object System.Drawing.Size(1040, 282)) -Tag "Surface"
 [void](New-Label -Parent $LiveQueueSurface -Text "Download queue" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
 $LiveQueueSummary = New-Label -Parent $LiveQueueSurface -Text "Connect to load the current queue." -Location (New-Object System.Drawing.Point(180, 22)) -Size (New-Object System.Drawing.Size(820, 20)) -AutoSize $false -Tag "MutedStrong"
 $LiveQueueGrid = New-Object System.Windows.Forms.DataGridView
@@ -2658,7 +2667,7 @@ $LiveQueueGrid.RowTemplate.Height = 28
 [void]$LiveQueueGrid.Columns.Add("ETA", "ETA"); $LiveQueueGrid.Columns["ETA"].AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
 [void]$LiveQueueSurface.Controls.Add($LiveQueueGrid)
 
-$LiveCaptchaSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 778)) -Size (New-Object System.Drawing.Size(1040, 220)) -Tag "Callout"
+$LiveCaptchaSurface = New-Surface -Parent $LiveControlCanvas -Location (New-Object System.Drawing.Point(0, 856)) -Size (New-Object System.Drawing.Size(1040, 220)) -Tag "Callout"
 [void](New-Label -Parent $LiveCaptchaSurface -Text "Captcha attention" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
 $LiveCaptchaBadge = New-Badge -Parent $LiveCaptchaSurface -Text "No pending captcha" -Location (New-Object System.Drawing.Point(780, 18)) -Size (New-Object System.Drawing.Size(196, 28)) -Tag "BadgeSuccess"
 $LiveCaptchaDetail = New-Label -Parent $LiveCaptchaSurface -Text "Captcha prompts from JDownloader appear here while the app stays in the tray." -Location (New-Object System.Drawing.Point(24, 50)) -Size (New-Object System.Drawing.Size(690, 22)) -AutoSize $false -Tag "BodyMuted"
@@ -2829,15 +2838,80 @@ function Update-LiveQueueGrid {
     $LiveQueueSummary.Text = "{0} link(s), {1} active, {2} finished, {3}/s" -f $Queue.TotalLinks, $Queue.ActiveLinks, $Queue.FinishedLinks, (Format-LiveBytes $Queue.SpeedBps)
 }
 
+function Get-LiveApiMode {
+    if ($CboLiveMode -and $CboLiveMode.Text -eq "MyJDownloader") { return "MyJDownloader" }
+    return "Local"
+}
+
+function Get-LiveApiConnectionKey {
+    $mode = Get-LiveApiMode
+    $endpoint = if ($TxtLiveEndpoint) { $TxtLiveEndpoint.Text.Trim().TrimEnd("/") } else { "" }
+    $email = if ($TxtLiveEmail) { $TxtLiveEmail.Text.Trim().ToLowerInvariant() } else { "" }
+    $device = if ($TxtLiveDevice) { $TxtLiveDevice.Text.Trim() } else { "" }
+    return "{0}|{1}|{2}|{3}" -f $mode, $endpoint, $email, $device
+}
+
+function Update-LiveConnectionModeControls {
+    if (-not $CboLiveMode) { return }
+    $remote = (Get-LiveApiMode) -eq "MyJDownloader"
+    $TxtLiveEmail.Enabled = $remote
+    $TxtLivePassword.Enabled = $remote
+    $TxtLiveDevice.Enabled = $remote
+    if ($remote) {
+        if ($TxtLiveEndpoint.Text.Trim().TrimEnd("/") -eq "http://127.0.0.1:3128") { $TxtLiveEndpoint.Text = "https://api.jdownloader.org" }
+    } elseif ($TxtLiveEndpoint.Text.Trim().TrimEnd("/") -eq "https://api.jdownloader.org") {
+        $TxtLiveEndpoint.Text = "http://127.0.0.1:3128"
+    }
+}
+
 function New-LiveApiClientFromControls {
     if (-not $script:ApiModuleLoaded) {
         throw "The JD2 API module could not be loaded."
     }
+    $mode = Get-LiveApiMode
     $endpoint = $TxtLiveEndpoint.Text.Trim()
     if ([string]::IsNullOrWhiteSpace($endpoint)) { throw "Enter a JDownloader API endpoint first." }
     if ($endpoint -notmatch "^(?i)https?://") { throw "The JDownloader API endpoint must start with http:// or https://." }
     $script:LiveApiEndpoint = $endpoint.TrimEnd("/")
-    return New-JD2ApiClient -BaseUrl $script:LiveApiEndpoint -Mode "Local" -TimeoutSec 5
+    if ($mode -eq "Local") {
+        $script:LiveApiConnectionKey = Get-LiveApiConnectionKey
+        return New-JD2ApiClient -BaseUrl $script:LiveApiEndpoint -Mode "Local" -TimeoutSec 5
+    }
+
+    $email = $TxtLiveEmail.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($email)) { throw "Enter the MyJDownloader account email first." }
+    if ([string]::IsNullOrWhiteSpace($TxtLivePassword.Text)) { throw "Enter the MyJDownloader password before connecting." }
+    $requestedDevice = $TxtLiveDevice.Text.Trim()
+    $client = $null
+    $securePassword = $null
+    try {
+        $securePassword = ConvertTo-SecureString $TxtLivePassword.Text -AsPlainText -Force
+        $client = New-JD2ApiClient -BaseUrl $script:LiveApiEndpoint -Mode "MyJDownloader" -TimeoutSec 10
+        $devices = @(Connect-JD2MyJDownloader -Client $client -Email $email -Password $securePassword)
+        if ($devices.Count -eq 0) { throw "MyJDownloader returned no devices for this account." }
+        if (-not [string]::IsNullOrWhiteSpace($requestedDevice)) {
+            $selected = $null
+            try { $selected = Set-JD2MyJDownloaderDevice -Client $client -DeviceId $requestedDevice } catch {}
+            if (-not $selected) {
+                try { $selected = Set-JD2MyJDownloaderDevice -Client $client -DeviceName $requestedDevice } catch {}
+            }
+            if (-not $selected) { throw "MyJDownloader device '$requestedDevice' was not found." }
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$client.DeviceId)) {
+            $names = @($devices | ForEach-Object { [string]$_.name } | Where-Object { $_ })
+            throw "Select a MyJDownloader device. Available devices: $($names -join ', ')"
+        }
+        $TxtLiveEmail.Text = $client.Email
+        $TxtLiveDevice.Text = $client.DeviceName
+        $TxtLivePassword.Clear()
+        $script:LiveApiConnectionKey = Get-LiveApiConnectionKey
+        return $client
+    } catch {
+        if ($client) { try { Disconnect-JD2MyJDownloader -Client $client | Out-Null } catch {} }
+        throw
+    } finally {
+        if ($securePassword) { try { $securePassword.Dispose() } catch {} }
+    }
 }
 
 function Refresh-LiveLinkGrabber {
@@ -2851,10 +2925,15 @@ function Refresh-LiveLinkGrabber {
 }
 
 function Refresh-LiveApiQueue {
+    param([switch]$ForceReconnect)
     if ($script:LiveApiBusy) { return }
     $script:LiveApiBusy = $true
     try {
-        if (-not $script:LiveApiClient -or $TxtLiveEndpoint.Text.TrimEnd("/") -ne $script:LiveApiEndpoint) {
+        $currentKey = Get-LiveApiConnectionKey
+        if ($ForceReconnect -or -not $script:LiveApiClient -or $currentKey -ne $script:LiveApiConnectionKey) {
+            if ($script:LiveApiClient -and $script:LiveApiClient.Mode -eq "MyJDownloader") {
+                try { Disconnect-JD2MyJDownloader -Client $script:LiveApiClient | Out-Null } catch {}
+            }
             $script:LiveApiClient = New-LiveApiClientFromControls
         }
         $queue = Get-JD2Queue -Client $script:LiveApiClient
@@ -3254,7 +3333,13 @@ function Apply-StateToControls {
         if (Test-StateHas $State "BandwidthScheduleStart") { $TxtBandwidthStart.Text = [string]$State.BandwidthScheduleStart }
         if (Test-StateHas $State "BandwidthScheduleEnd") { $TxtBandwidthEnd.Text = [string]$State.BandwidthScheduleEnd }
         if (Test-StateHas $State "BandwidthScheduleLimit") { Set-NumericSafe -Control $NumOffPeakLimit -Value ([math]::Max(1, [math]::Ceiling([int64]$State.BandwidthScheduleLimit / 1024))) }
-        if (Test-StateHas $State "BandwidthEndpoint") { $TxtLiveEndpoint.Text = [string]$State.BandwidthEndpoint }
+        if (Test-StateHas $State "LiveApiMode") {
+            $liveMode = if ([string]$State.LiveApiMode -eq "MyJDownloader") { "MyJDownloader" } else { "Local API" }
+            if ($CboLiveMode.Items.Contains($liveMode)) { $CboLiveMode.SelectedItem = $liveMode }
+        }
+        if (Test-StateHas $State "LiveApiEndpoint") { $TxtLiveEndpoint.Text = [string]$State.LiveApiEndpoint }
+        elseif (Test-StateHas $State "BandwidthEndpoint") { $TxtLiveEndpoint.Text = [string]$State.BandwidthEndpoint }
+        if (Test-StateHas $State "LiveApiDevice") { $TxtLiveDevice.Text = [string]$State.LiveApiDevice }
         if (Test-StateHas $State "HashCheck")       { $ChkHashCheck.Checked    = ConvertTo-SafeBool $State.HashCheck        $true }
         if (Test-StateHas $State "PreserveFileDate"){ $ChkPreserveDate.Checked = ConvertTo-SafeBool $State.PreserveFileDate $false }
         if (Test-StateHas $State "ClipboardMonitor"){ $ChkClipboard.Checked    = ConvertTo-SafeBool $State.ClipboardMonitor $true }
@@ -3269,6 +3354,7 @@ function Apply-StateToControls {
         $script:IsBootstrapping = $previousBootstrapping
     }
 
+    Update-LiveConnectionModeControls
     Apply-GuiTheme -ThemeName $CboGuiTheme.Text
     Update-ModeSummary
     Update-PathState
@@ -3291,6 +3377,9 @@ function Get-CurrentGuiState {
         $src = "Mega"
     }
 
+    $liveMode = Get-LiveApiMode
+    $liveEndpoint = $TxtLiveEndpoint.Text.Trim()
+    $bandwidthEndpoint = if ($liveMode -eq "MyJDownloader") { "http://127.0.0.1:3128" } else { $liveEndpoint }
     return [ordered]@{
         Mode            = $mode
         InstallSource   = $src
@@ -3318,7 +3407,10 @@ function Get-CurrentGuiState {
         BandwidthScheduleStart= $TxtBandwidthStart.Text.Trim()
         BandwidthScheduleEnd= $TxtBandwidthEnd.Text.Trim()
         BandwidthScheduleLimit= [int]$NumOffPeakLimit.Value * 1024
-        BandwidthEndpoint= $TxtLiveEndpoint.Text.Trim()
+        BandwidthEndpoint= $bandwidthEndpoint
+        LiveApiMode      = $liveMode
+        LiveApiEndpoint  = $liveEndpoint
+        LiveApiDevice    = $TxtLiveDevice.Text.Trim()
         HashCheck       = [bool]$ChkHashCheck.Checked
         PreserveFileDate= [bool]$ChkPreserveDate.Checked
         ClipboardMonitor= [bool]$ChkClipboard.Checked
@@ -3341,6 +3433,12 @@ function Get-NormalizedStateObject {
     if ([string]::IsNullOrWhiteSpace($languageCode)) { $languageCode = $CurrentLangCode }
     $bandwidthEndpoint = ([string]$State.BandwidthEndpoint).Trim()
     if ([string]::IsNullOrWhiteSpace($bandwidthEndpoint)) { $bandwidthEndpoint = "http://127.0.0.1:3128" }
+    if ($bandwidthEndpoint.TrimEnd("/") -eq "https://api.jdownloader.org") { $bandwidthEndpoint = "http://127.0.0.1:3128" }
+    $liveApiMode = if ([string]$State.LiveApiMode -eq "MyJDownloader") { "MyJDownloader" } else { "Local" }
+    $liveApiEndpoint = ([string]$State.LiveApiEndpoint).Trim()
+    if ([string]::IsNullOrWhiteSpace($liveApiEndpoint)) { $liveApiEndpoint = $bandwidthEndpoint }
+    if ($liveApiMode -eq "MyJDownloader" -and $liveApiEndpoint.TrimEnd("/") -eq "http://127.0.0.1:3128") { $liveApiEndpoint = "https://api.jdownloader.org" }
+    $liveApiDevice = ([string]$State.LiveApiDevice).Trim()
     $scheduleStart = ConvertTo-BandwidthScheduleTime -Value $State.BandwidthScheduleStart
     if (-not $scheduleStart) { $scheduleStart = "09:00" }
     $scheduleEnd = ConvertTo-BandwidthScheduleTime -Value $State.BandwidthScheduleEnd
@@ -3382,6 +3480,9 @@ function Get-NormalizedStateObject {
         BandwidthScheduleEnd= $scheduleEnd
         BandwidthScheduleLimit= if (Test-StateHas $State "BandwidthScheduleLimit") { [math]::Max(1024, (& $toInt $State.BandwidthScheduleLimit 2097152)) } else { 2097152 }
         BandwidthEndpoint= $bandwidthEndpoint
+        LiveApiMode      = $liveApiMode
+        LiveApiEndpoint  = $liveApiEndpoint
+        LiveApiDevice    = $liveApiDevice
         HashCheck       = if (Test-StateHas $State "HashCheck")        { ConvertTo-SafeBool $State.HashCheck        $true }  else { $true }
         PreserveFileDate= if (Test-StateHas $State "PreserveFileDate") { ConvertTo-SafeBool $State.PreserveFileDate $false } else { $false }
         ClipboardMonitor= if (Test-StateHas $State "ClipboardMonitor") { ConvertTo-SafeBool $State.ClipboardMonitor $true }  else { $true }
@@ -3421,6 +3522,9 @@ function Get-DefaultWorkspaceState {
         BandwidthScheduleEnd= "17:00"
         BandwidthScheduleLimit= 2097152
         BandwidthEndpoint= "http://127.0.0.1:3128"
+        LiveApiMode      = "Local"
+        LiveApiEndpoint  = "http://127.0.0.1:3128"
+        LiveApiDevice    = ""
         HashCheck       = $true
         PreserveFileDate= $false
         ClipboardMonitor= $true
@@ -3558,6 +3662,7 @@ function Get-ChangedWorkspaceAreas {
         "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray", "MaxChunks", "MaxPerHost", "MaxPerHostEnabled", "SpeedLimitEnabled", "SpeedLimit", "BandwidthScheduleEnabled", "BandwidthScheduleStart", "BandwidthScheduleEnd", "BandwidthScheduleLimit", "BandwidthEndpoint", "HashCheck", "PreserveFileDate", "ClipboardMonitor")
         "hardening"            = @("PatchExe", "AutoUpdate", "DisableLocalAPI", "WriteVmOptions")
         "workspace preferences"= @("GuiThemeName", "LanguageCode")
+        "remote control"       = @("LiveApiMode", "LiveApiEndpoint", "LiveApiDevice")
     }
 
     $changedAreas = New-Object System.Collections.Generic.List[string]
@@ -3712,29 +3817,33 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $ThemePreviewBadge -Name "Theme preview status" -Description "Shows whether the selected theme preview is ready, loading, or unavailable."
     Set-ControlMetadata -Control $BehProfileBadge -Name "Behavior profile summary" -Description "Summarizes the current download and window behavior profile."
     Set-ControlMetadata -Control $InstallBadge -Name "Installation readiness" -Description "Shows whether the selected installation path and mode are ready."
-    Set-ControlMetadata -Control $TxtLiveEndpoint -Name "JDownloader API endpoint" -Description "Enter the local or remote HTTP endpoint for JDownloader's JSON API." -TabIndex 0
-    Set-ControlMetadata -Control $BtnLiveConnect -Name "Connect to JDownloader" -Description "Connect to the configured JDownloader API endpoint." -TabIndex 1
-    Set-ControlMetadata -Control $BtnLiveRefresh -Name "Refresh live queue" -Description "Reload the current JDownloader download queue." -TabIndex 2
-    Set-ControlMetadata -Control $BtnLiveStart -Name "Start downloads" -Description "Start JDownloader's download controller." -TabIndex 3
-    Set-ControlMetadata -Control $BtnLivePause -Name "Pause downloads" -Description "Pause JDownloader downloads." -TabIndex 4
-    Set-ControlMetadata -Control $BtnLiveStop -Name "Stop downloads" -Description "Stop JDownloader's download controller." -TabIndex 5
-    Set-ControlMetadata -Control $BtnLiveGrabberRefresh -Name "Refresh LinkGrabber" -Description "Reload the current LinkGrabber package and link counts." -TabIndex 6
-    Set-ControlMetadata -Control $TxtLiveLinks -Name "Links for LinkGrabber" -Description "Paste one or more URLs to send to JDownloader LinkGrabber." -TabIndex 7
-    Set-ControlMetadata -Control $TxtLivePackage -Name "LinkGrabber package name" -Description "Optional package name for the links sent to LinkGrabber." -TabIndex 8
-    Set-ControlMetadata -Control $BtnLiveAddLinks -Name "Send links to LinkGrabber" -Description "Forward the pasted URLs to JDownloader LinkGrabber." -TabIndex 9
-    Set-ControlMetadata -Control $LiveQueueGrid -Name "JDownloader download queue" -Description "Shows current links, status, progress, speed, and estimated time." -TabIndex 10
-    Set-ControlMetadata -Control $TxtLiveCaptchaAnswer -Name "Captcha answer" -Description "Enter the answer for the pending JDownloader captcha prompt." -TabIndex 11
-    Set-ControlMetadata -Control $BtnLiveCaptchaSolve -Name "Submit captcha answer" -Description "Submit the captcha answer to JDownloader." -TabIndex 12
-    Set-ControlMetadata -Control $BtnLiveCaptchaSkip -Name "Skip captcha" -Description "Skip the current JDownloader captcha prompt." -TabIndex 13
-    Set-ControlMetadata -Control $BtnLiveCaptchaRefresh -Name "Refresh captcha prompts" -Description "Refresh the pending JDownloader captcha prompt." -TabIndex 14
-    Set-ControlMetadata -Control $AccountGrid -Name "JDownloader account list" -Description "Shows configured hoster accounts without exposing passwords." -TabIndex 15
-    Set-ControlMetadata -Control $TxtAccountHoster -Name "Premium hoster" -Description "Enter the hoster identifier accepted by JDownloader." -TabIndex 16
-    Set-ControlMetadata -Control $TxtAccountUsername -Name "Account username" -Description "Enter the premium hoster account username." -TabIndex 17
-    Set-ControlMetadata -Control $TxtAccountPassword -Name "Account password" -Description "Enter the password for this add-account action." -TabIndex 18
-    Set-ControlMetadata -Control $BtnAccountAdd -Name "Add account" -Description "Send the account credentials to JDownloader." -TabIndex 19
-    Set-ControlMetadata -Control $BtnAccountEnable -Name "Enable selected accounts" -Description "Enable the selected JDownloader accounts." -TabIndex 20
-    Set-ControlMetadata -Control $BtnAccountDisable -Name "Disable selected accounts" -Description "Disable the selected JDownloader accounts." -TabIndex 21
-    Set-ControlMetadata -Control $BtnAccountRemove -Name "Remove selected accounts" -Description "Remove the selected JDownloader accounts after confirmation." -TabIndex 22
+    Set-ControlMetadata -Control $CboLiveMode -Name "JDownloader connection mode" -Description "Choose the unauthenticated local API or an encrypted MyJDownloader connection." -TabIndex 0
+    Set-ControlMetadata -Control $TxtLiveEndpoint -Name "JDownloader API endpoint" -Description "Enter the local endpoint or MyJDownloader API endpoint." -TabIndex 1
+    Set-ControlMetadata -Control $TxtLiveEmail -Name "MyJDownloader email" -Description "Enter the MyJDownloader account email. It is used only for the current session." -TabIndex 2
+    Set-ControlMetadata -Control $TxtLivePassword -Name "MyJDownloader password" -Description "Enter the MyJDownloader password. It is cleared after a successful connection and never saved in workspace state." -TabIndex 3
+    Set-ControlMetadata -Control $TxtLiveDevice -Name "MyJDownloader device" -Description "Enter a MyJDownloader device name or id, or leave blank when the account has one device." -TabIndex 4
+    Set-ControlMetadata -Control $BtnLiveConnect -Name "Connect to JDownloader" -Description "Connect to the configured local API or MyJDownloader device." -TabIndex 5
+    Set-ControlMetadata -Control $BtnLiveRefresh -Name "Refresh live queue" -Description "Reload the current JDownloader download queue." -TabIndex 6
+    Set-ControlMetadata -Control $BtnLiveStart -Name "Start downloads" -Description "Start JDownloader's download controller." -TabIndex 7
+    Set-ControlMetadata -Control $BtnLivePause -Name "Pause downloads" -Description "Pause JDownloader downloads." -TabIndex 8
+    Set-ControlMetadata -Control $BtnLiveStop -Name "Stop downloads" -Description "Stop JDownloader's download controller." -TabIndex 9
+    Set-ControlMetadata -Control $BtnLiveGrabberRefresh -Name "Refresh LinkGrabber" -Description "Reload the current LinkGrabber package and link counts." -TabIndex 10
+    Set-ControlMetadata -Control $TxtLiveLinks -Name "Links for LinkGrabber" -Description "Paste one or more URLs to send to JDownloader LinkGrabber." -TabIndex 11
+    Set-ControlMetadata -Control $TxtLivePackage -Name "LinkGrabber package name" -Description "Optional package name for the links sent to JDownloader." -TabIndex 12
+    Set-ControlMetadata -Control $BtnLiveAddLinks -Name "Send links to LinkGrabber" -Description "Forward the pasted URLs to JDownloader LinkGrabber." -TabIndex 13
+    Set-ControlMetadata -Control $LiveQueueGrid -Name "JDownloader download queue" -Description "Shows current links, status, progress, speed, and estimated time." -TabIndex 14
+    Set-ControlMetadata -Control $TxtLiveCaptchaAnswer -Name "Captcha answer" -Description "Enter the answer for the pending JDownloader captcha prompt." -TabIndex 15
+    Set-ControlMetadata -Control $BtnLiveCaptchaSolve -Name "Submit captcha answer" -Description "Submit the captcha answer to JDownloader." -TabIndex 16
+    Set-ControlMetadata -Control $BtnLiveCaptchaSkip -Name "Skip captcha" -Description "Skip the current JDownloader captcha prompt." -TabIndex 17
+    Set-ControlMetadata -Control $BtnLiveCaptchaRefresh -Name "Refresh captcha prompts" -Description "Refresh the pending JDownloader captcha prompt." -TabIndex 18
+    Set-ControlMetadata -Control $AccountGrid -Name "JDownloader account list" -Description "Shows configured hoster accounts without exposing passwords." -TabIndex 19
+    Set-ControlMetadata -Control $TxtAccountHoster -Name "Premium hoster" -Description "Enter the hoster identifier accepted by JDownloader." -TabIndex 20
+    Set-ControlMetadata -Control $TxtAccountUsername -Name "Account username" -Description "Enter the premium hoster account username." -TabIndex 21
+    Set-ControlMetadata -Control $TxtAccountPassword -Name "Account password" -Description "Enter the password for this add-account action." -TabIndex 22
+    Set-ControlMetadata -Control $BtnAccountAdd -Name "Add account" -Description "Send the account credentials to JDownloader." -TabIndex 23
+    Set-ControlMetadata -Control $BtnAccountEnable -Name "Enable selected accounts" -Description "Enable the selected JDownloader accounts." -TabIndex 24
+    Set-ControlMetadata -Control $BtnAccountDisable -Name "Disable selected accounts" -Description "Disable the selected JDownloader accounts." -TabIndex 25
+    Set-ControlMetadata -Control $BtnAccountRemove -Name "Remove selected accounts" -Description "Remove the selected JDownloader accounts after confirmation." -TabIndex 26
 }
 
 # --- Themes Page ---
@@ -4557,7 +4666,10 @@ $ChkPreserveDate.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceSt
 $ChkClipboard.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
 $ChkDisableAPI.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
 $ChkVmOptions.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
-$BtnLiveConnect.Add_Click({ Refresh-LiveApiQueue; Refresh-LiveCaptcha })
+$CboLiveMode.Add_SelectedIndexChanged({ Update-LiveConnectionModeControls; Update-WorkspaceState })
+$TxtLiveEndpoint.Add_TextChanged({ Update-WorkspaceState })
+$TxtLiveDevice.Add_TextChanged({ Update-WorkspaceState })
+$BtnLiveConnect.Add_Click({ Refresh-LiveApiQueue -ForceReconnect; Refresh-LiveCaptcha })
 $BtnLiveRefresh.Add_Click({ Refresh-LiveApiQueue; Refresh-LiveCaptcha })
 $BtnLiveStart.Add_Click({ Invoke-LiveApiAction -Action "Start" })
 $BtnLivePause.Add_Click({ Invoke-LiveApiAction -Action "Pause" })
@@ -4651,7 +4763,11 @@ $ToolTip.SetToolTip($ChkClipboard, "Automatically detect and queue download link
 $ToolTip.SetToolTip($ChkExe, "Replaces the executable icon for a more cohesive dark desktop setup.")
 $ToolTip.SetToolTip($ChkDisableAPI, "Disables the legacy local REST API (port 3128) that requires no authentication.")
 $ToolTip.SetToolTip($ChkVmOptions, "Creates a JDownloader2.vmoptions file with JVM performance flags. Skipped if the file already exists.")
-$ToolTip.SetToolTip($TxtLiveEndpoint, "Local default: http://127.0.0.1:3128. Enable JDownloader's deprecated local API first.")
+$ToolTip.SetToolTip($CboLiveMode, "Choose Local API for a JDownloader instance on this computer or MyJDownloader for encrypted remote control.")
+$ToolTip.SetToolTip($TxtLiveEndpoint, "Local default: http://127.0.0.1:3128. MyJDownloader default: https://api.jdownloader.org.")
+$ToolTip.SetToolTip($TxtLiveEmail, "MyJDownloader email used for this connection only.")
+$ToolTip.SetToolTip($TxtLivePassword, "Password is cleared after a successful MyJDownloader connection and is never written to workspace state.")
+$ToolTip.SetToolTip($TxtLiveDevice, "Optional MyJDownloader device name or id. Leave blank when only one device is registered.")
 $ToolTip.SetToolTip($BtnLiveConnect, "Connect to the configured JDownloader API endpoint.")
 $ToolTip.SetToolTip($BtnLiveRefresh, "Refresh the download queue and connection status.")
 $ToolTip.SetToolTip($BtnLiveStart, "Start all eligible JDownloader downloads.")
@@ -4711,6 +4827,7 @@ $Form.Add_Load({
         Log-Status "JDownloader was not detected. Clean install mode is ready." "INFO"
     }
 
+    Update-LiveConnectionModeControls
     Configure-DirectoryInput -TextBox $TxtPath -CueText "Required for modify mode. Optional for clean install mode."
     Configure-DirectoryInput -TextBox $TxtDl -CueText "Leave blank to reset to JDownloader's default download folder."
     Apply-AccessibilityMetadata
@@ -4763,6 +4880,9 @@ $Form.Add_FormClosing({
         return
     }
     if ($LogoBox -and $LogoBox.Image) { try { $LogoBox.Image.Dispose() } catch {} }
+    if ($script:LiveApiClient -and $script:LiveApiClient.Mode -eq "MyJDownloader") {
+        try { Disconnect-JD2MyJDownloader -Client $script:LiveApiClient | Out-Null } catch {}
+    }
     Cleanup-Resources
 })
 
