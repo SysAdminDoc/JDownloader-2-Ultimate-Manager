@@ -2,6 +2,7 @@
 *.log
 *.tmp
 *.bad-*
+testResults.xml
 .vs/
 .vscode/
 CLAUDE.md

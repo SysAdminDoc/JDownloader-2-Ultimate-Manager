@@ -15,6 +15,9 @@ All notable changes to JDownloader-2-Ultimate-Manager will be documented in this
 - **Native theme packs and builder** for Catppuccin Mocha, OLED Black, and Nord, with local previews, icon-key validation, and portable `.theme` export.
 - **Maintenance and recovery tools** for scheduled retention cleanup, health indicators, cfg snapshot restore, Safe-Mode diffs, and rollback-protected core updates.
 - **Non-blocking workspace UX** with dark owner-drawn dropdowns, toast feedback, and dashboard drag-and-drop preset import.
+- **Download integrations** with provider-validated Discord/Slack webhooks, hidden post-download hooks, and DPAPI-protected webhook settings excluded from presets.
+- **Dry-run diff viewer** that lists changed settings plus predicted files and Task Scheduler actions before Apply Workspace begins.
+- **PowerShell Core/AppImage configuration path** in `Tools\JD2CrossPlatform.ps1`, with atomic JSON writes, cfg snapshots, cleanup, path guards, and Pester coverage.
 
 ## [v13.8.0] - 2026-06-27
 

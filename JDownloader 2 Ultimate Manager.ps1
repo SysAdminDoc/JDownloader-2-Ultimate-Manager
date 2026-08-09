@@ -182,6 +182,8 @@ $script:LiveApiBusy = $false
 $script:LiveApiPollTimer = $null
 $script:LiveCaptchaJob = $null
 $script:LiveCaptchaBitmap = $null
+$script:LiveQueueState = @{}
+$script:LiveQueueNotificationPrimed = $false
 $script:ToastWindows = New-Object System.Collections.Generic.List[object]
 $script:ToastsEnabled = $false
 
@@ -624,11 +626,62 @@ function Log-Status {
     try { Update-StatusVisual -Text $Text -Type $Type } catch {}
 }
 
+function Protect-SettingsValue {
+    param([string]$PlainText)
+    if ([string]::IsNullOrWhiteSpace($PlainText)) { return "" }
+    $secure = $null
+    try {
+        $secure = ConvertTo-SecureString -String $PlainText -AsPlainText -Force
+        return ConvertFrom-SecureString -SecureString $secure
+    } catch {
+        Log-Status "Could not protect a sensitive workspace setting with Windows DPAPI." "WARN"
+        return ""
+    } finally {
+        if ($secure) { try { $secure.Dispose() } catch {} }
+    }
+}
+
+function Unprotect-SettingsValue {
+    param([string]$CipherText)
+    if ([string]::IsNullOrWhiteSpace($CipherText)) { return "" }
+    $secure = $null
+    $ptr = [IntPtr]::Zero
+    try {
+        $secure = ConvertTo-SecureString -String $CipherText -ErrorAction Stop
+        $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    } catch {
+        Log-Status "A protected workspace setting could not be decrypted for this Windows user." "WARN"
+        return ""
+    } finally {
+        if ($ptr -ne [IntPtr]::Zero) { try { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) } catch {} }
+        if ($secure) { try { $secure.Dispose() } catch {} }
+    }
+}
+
 function Save-Settings {
     param($SettingsObj)
     if (-not $SettingsObj) { return }
     try {
-        $json = $SettingsObj | ConvertTo-Json -Depth 10
+        $payload = [ordered]@{}
+        if ($SettingsObj -is [System.Collections.IDictionary]) {
+            foreach ($key in $SettingsObj.Keys) {
+                if ([string]$key -eq "WebhookUrl") {
+                    $payload.WebhookUrlProtected = Protect-SettingsValue -PlainText ([string]$SettingsObj[$key])
+                } else {
+                    $payload[[string]$key] = $SettingsObj[$key]
+                }
+            }
+        } else {
+            foreach ($property in @($SettingsObj.PSObject.Properties)) {
+                if ($property.Name -eq "WebhookUrl") {
+                    $payload.WebhookUrlProtected = Protect-SettingsValue -PlainText ([string]$property.Value)
+                } else {
+                    $payload[$property.Name] = $property.Value
+                }
+            }
+        }
+        $json = $payload | ConvertTo-Json -Depth 10
         $tmp = "$SettingsFile.tmp"
         Set-Content -Path $tmp -Value $json -Encoding UTF8 -ErrorAction Stop
         # Atomic replace: move temp into place so a crash mid-write never corrupts settings.
@@ -662,7 +715,13 @@ function Load-Settings {
     try {
         $raw = Get-Content $sourcePath -Raw -Encoding UTF8 -ErrorAction Stop
         if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
-        return $raw | ConvertFrom-Json -ErrorAction Stop
+        $settings = $raw | ConvertFrom-Json -ErrorAction Stop
+        if ($settings.PSObject.Properties.Name -contains "WebhookUrlProtected") {
+            $webhookUrl = Unprotect-SettingsValue -CipherText ([string]$settings.WebhookUrlProtected)
+            $settings | Add-Member -MemberType NoteProperty -Name WebhookUrl -Value $webhookUrl -Force
+            $settings.PSObject.Properties.Remove("WebhookUrlProtected")
+        }
+        return $settings
     } catch {
         # Corrupt settings file - quarantine it so the next run isn't stuck in a bad state.
         try {
@@ -2902,7 +2961,7 @@ $PageAccounts     = New-PagePanel -CanvasHeight 660; [void]$MainPanel.Controls.A
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 970; [void]$MainPanel.Controls.Add($PageTheme)
 $PageBehavior     = New-PagePanel -CanvasHeight 1040; [void]$MainPanel.Controls.Add($PageBehavior)
-$PageHardening    = New-PagePanel -CanvasHeight 780; [void]$MainPanel.Controls.Add($PageHardening)
+$PageHardening    = New-PagePanel -CanvasHeight 1040; [void]$MainPanel.Controls.Add($PageHardening)
 $PageRepair       = New-PagePanel -CanvasHeight 860; [void]$MainPanel.Controls.Add($PageRepair)
 
 $DashboardCanvas = Get-PageCanvas $PageDashboard
@@ -3373,6 +3432,135 @@ function Refresh-LiveLinkGrabber {
     }
 }
 
+function Get-WebhookUri {
+    if (-not $TxtWebhookUrl) { return $null }
+    $raw = $TxtWebhookUrl.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($raw)) { throw "Enter a Discord or Slack webhook URL first." }
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($raw, [System.UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne "https") {
+        throw "Webhook URL must be an absolute HTTPS URL."
+    }
+    $hostName = $uri.Host.ToLowerInvariant()
+    $allowed = if ($CboWebhookProvider.Text -eq "Slack") { @("hooks.slack.com") } else { @("discord.com", "discordapp.com") }
+    if ($allowed -notcontains $hostName) { throw "The URL host does not match the selected $($CboWebhookProvider.Text) provider." }
+    return $uri
+}
+
+function Send-DownloadWebhook {
+    param(
+        [ValidateSet("Test", "Completed", "Failed")][string]$Event = "Test",
+        [string]$LinkName = "",
+        [string]$HostName = "",
+        [string]$Status = "",
+        [switch]$Force
+    )
+    if (-not $ChkWebhookEnabled -or (-not $ChkWebhookEnabled.Checked -and -not $Force)) { return $false }
+    try {
+        $uri = Get-WebhookUri
+        $label = if ($Event -eq "Completed") { "Download completed" } elseif ($Event -eq "Failed") { "Download failed" } else { "JDownloader webhook test" }
+        $detail = @($LinkName, $HostName, $Status) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $message = if ($detail.Count -gt 0) { "${label}: $($detail -join ' | ')" } else { "${label}." }
+        if ($CboWebhookProvider.Text -eq "Slack") {
+            $payload = @{ text = $message } | ConvertTo-Json -Compress
+        } else {
+            $payload = @{ username = "JDownloader 2 Ultimate Manager"; content = $message } | ConvertTo-Json -Compress
+        }
+        Invoke-RestMethod -Uri $uri.AbsoluteUri -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($payload)) -ContentType "application/json" -TimeoutSec 12 -ErrorAction Stop | Out-Null
+        Log-Status "$($CboWebhookProvider.Text) webhook sent: $label." "SUCCESS"
+        if ($LblIntegrationStatus) { $LblIntegrationStatus.Text = "$($CboWebhookProvider.Text) webhook sent at $((Get-Date).ToString('HH:mm:ss'))." }
+        return $true
+    } catch {
+        Log-Status "Webhook notification failed: $($_.Exception.Message)" "WARN"
+        if ($LblIntegrationStatus) { $LblIntegrationStatus.Text = "Webhook failed: $($_.Exception.Message)" }
+        return $false
+    }
+}
+
+function Invoke-PostDownloadHook {
+    param(
+        [ValidateSet("Completed", "Failed")][string]$Event,
+        [string]$LinkId,
+        [string]$LinkName,
+        [string]$HostName,
+        [string]$Status,
+        [string]$BytesTotal
+    )
+    if (-not $ChkPostDownloadHook -or -not $ChkPostDownloadHook.Checked) { return $false }
+    $hookPath = $TxtPostDownloadHook.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($hookPath) -or -not (Test-Path -LiteralPath $hookPath -PathType Leaf)) {
+        Log-Status "Post-download hook is enabled but its script path is missing." "WARN"
+        return $false
+    }
+    $extension = [System.IO.Path]::GetExtension($hookPath).ToLowerInvariant()
+    if ($extension -notin @('.ps1', '.cmd', '.bat', '.exe')) {
+        Log-Status "Post-download hook refused: use a .ps1, .cmd, .bat, or .exe file." "WARN"
+        return $false
+    }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $escapedPath = $hookPath.Replace('"', '\"')
+    if ($extension -eq '.ps1') {
+        $psi.FileName = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+        $psi.Arguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$escapedPath`""
+    } elseif ($extension -in @('.cmd', '.bat')) {
+        $psi.FileName = $env:ComSpec
+        $psi.Arguments = "/d /c `"$escapedPath`""
+    } else {
+        $psi.FileName = $hookPath
+    }
+    $envValues = @{
+        JD2_EVENT = $Event
+        JD2_LINK_ID = $LinkId
+        JD2_LINK_NAME = $LinkName
+        JD2_HOST = $HostName
+        JD2_STATUS = $Status
+        JD2_BYTES_TOTAL = $BytesTotal
+        JD2_INSTALL_PATH = if ($TxtPath) { $TxtPath.Text.Trim() } else { "" }
+        JD2_MANAGER_VERSION = $script:AppVersion
+    }
+    foreach ($key in $envValues.Keys) { $psi.EnvironmentVariables[$key] = [string]$envValues[$key] }
+    try {
+        $process = [System.Diagnostics.Process]::Start($psi)
+        if ($process -and -not $process.WaitForExit(30000)) { try { $process.Kill() } catch {}; Log-Status "Post-download hook exceeded 30 seconds and was stopped." "WARN" }
+        elseif ($process -and $process.ExitCode -ne 0) { Log-Status "Post-download hook exited with code $($process.ExitCode)." "WARN" }
+        else { Log-Status "Post-download hook completed for '$LinkName'." "SUCCESS" }
+        if ($process) { $process.Dispose() }
+        return $true
+    } catch {
+        Log-Status "Post-download hook failed: $($_.Exception.Message)" "WARN"
+        return $false
+    }
+}
+
+function Invoke-LiveQueueEvents {
+    param($Queue)
+    if (-not $Queue) { return }
+    $current = @{}
+    foreach ($link in @($Queue.Links)) {
+        $linkId = [string](Get-LiveLinkProperty -Link $link -Name "uuid" -Default (Get-LiveLinkProperty -Link $link -Name "id" -Default ""))
+        $linkName = [string](Get-LiveLinkProperty -Link $link -Name "name" -Default "Unnamed link")
+        $hostName = [string](Get-LiveLinkProperty -Link $link -Name "host" -Default "")
+        if ([string]::IsNullOrWhiteSpace($linkId)) { $linkId = "$hostName|$linkName" }
+        $rawStatus = [string](Get-LiveLinkProperty -Link $link -Name "status" -Default "")
+        $finished = ConvertTo-SafeBool (Get-LiveLinkProperty -Link $link -Name "finished" -Default $false)
+        $failed = $rawStatus -match '(?i)error|fail|offline|aborted' -or (ConvertTo-SafeBool (Get-LiveLinkProperty -Link $link -Name "error" -Default $false))
+        $state = if ($failed) { "Failed" } elseif ($finished -or $rawStatus -match '(?i)finished|complete') { "Completed" } else { "Active" }
+        $current[$linkId] = $state
+        $previous = if ($script:LiveQueueState.ContainsKey($linkId)) { [string]$script:LiveQueueState[$linkId] } else { "" }
+        if ($script:LiveQueueNotificationPrimed -and $state -in @("Completed", "Failed") -and $state -ne $previous) {
+            $eventType = if ($state -eq "Completed") { "Completed" } else { "Failed" }
+            $statusText = if ($rawStatus) { $rawStatus } else { $state }
+            $bytesTotal = [string](Get-LiveLinkProperty -Link $link -Name "bytesTotal" -Default 0)
+            [void](Send-DownloadWebhook -Event $eventType -LinkName $linkName -HostName $hostName -Status $statusText)
+            [void](Invoke-PostDownloadHook -Event $eventType -LinkId $linkId -LinkName $linkName -HostName $hostName -Status $statusText -BytesTotal $bytesTotal)
+        }
+    }
+    $script:LiveQueueState = $current
+    $script:LiveQueueNotificationPrimed = $true
+}
+
 function Refresh-LiveApiQueue {
     param([switch]$ForceReconnect)
     if ($script:LiveApiBusy) { return }
@@ -3383,10 +3571,13 @@ function Refresh-LiveApiQueue {
             if ($script:LiveApiClient -and $script:LiveApiClient.Mode -eq "MyJDownloader") {
                 try { Disconnect-JD2MyJDownloader -Client $script:LiveApiClient | Out-Null } catch {}
             }
+            $script:LiveQueueState = @{}
+            $script:LiveQueueNotificationPrimed = $false
             $script:LiveApiClient = New-LiveApiClientFromControls
         }
         $queue = Get-JD2Queue -Client $script:LiveApiClient
         Update-LiveQueueGrid -Queue $queue
+        Invoke-LiveQueueEvents -Queue $queue
         $LiveHeroBadge.Text = "Connected"
         $LiveHeroBadge.Tag = "BadgeSuccess"
         $LiveConnectionBadge.Text = "Online"
@@ -3784,6 +3975,11 @@ function Apply-StateToControls {
         if (Test-StateHas $State "BandwidthScheduleLimit") { Set-NumericSafe -Control $NumOffPeakLimit -Value ([math]::Max(1, [math]::Ceiling([int64]$State.BandwidthScheduleLimit / 1024))) }
         if (Test-StateHas $State "CleanupScheduleEnabled") { $ChkCleanupSchedule.Checked = ConvertTo-SafeBool $State.CleanupScheduleEnabled $false }
         if (Test-StateHas $State "CleanupRetentionDays") { Set-NumericSafe -Control $NumCleanupRetention -Value $State.CleanupRetentionDays }
+        if (Test-StateHas $State "WebhookEnabled") { $ChkWebhookEnabled.Checked = ConvertTo-SafeBool $State.WebhookEnabled $false }
+        if (Test-StateHas $State "WebhookProvider" -and $CboWebhookProvider.Items.Contains([string]$State.WebhookProvider)) { $CboWebhookProvider.SelectedItem = [string]$State.WebhookProvider }
+        if (Test-StateHas $State "WebhookUrl") { $TxtWebhookUrl.Text = [string]$State.WebhookUrl }
+        if (Test-StateHas $State "PostDownloadHookEnabled") { $ChkPostDownloadHook.Checked = ConvertTo-SafeBool $State.PostDownloadHookEnabled $false }
+        if (Test-StateHas $State "PostDownloadHookPath") { $TxtPostDownloadHook.Text = [string]$State.PostDownloadHookPath }
         if (Test-StateHas $State "LiveApiMode") {
             $liveMode = if ([string]$State.LiveApiMode -eq "MyJDownloader") { "MyJDownloader" } else { "Local API" }
             if ($CboLiveMode.Items.Contains($liveMode)) { $CboLiveMode.SelectedItem = $liveMode }
@@ -3860,6 +4056,11 @@ function Get-CurrentGuiState {
         BandwidthScheduleLimit= [int]$NumOffPeakLimit.Value * 1024
         CleanupScheduleEnabled= [bool]$ChkCleanupSchedule.Checked
         CleanupRetentionDays= [int]$NumCleanupRetention.Value
+        WebhookEnabled   = [bool]$ChkWebhookEnabled.Checked
+        WebhookProvider  = $CboWebhookProvider.Text
+        WebhookUrl       = $TxtWebhookUrl.Text.Trim()
+        PostDownloadHookEnabled = [bool]$ChkPostDownloadHook.Checked
+        PostDownloadHookPath = $TxtPostDownloadHook.Text.Trim()
         BandwidthEndpoint= $bandwidthEndpoint
         LiveApiMode      = $liveMode
         LiveApiEndpoint  = $liveEndpoint
@@ -3906,6 +4107,9 @@ function Get-NormalizedStateObject {
     }
     $cleanupRetentionDays = if (Test-StateHas $State "CleanupRetentionDays") { [math]::Max(1, [math]::Min(3650, (& $toInt $State.CleanupRetentionDays 30))) } else { 30 }
     $cleanupScheduleEnabled = if (Test-StateHas $State "CleanupScheduleEnabled") { ConvertTo-SafeBool $State.CleanupScheduleEnabled $false } else { $false }
+    $webhookProvider = if ([string]$State.WebhookProvider -eq "Slack") { "Slack" } else { "Discord" }
+    $webhookUrl = if (Test-StateHas $State "WebhookUrl") { ([string]$State.WebhookUrl).Trim() } else { "" }
+    $postDownloadHookPath = if (Test-StateHas $State "PostDownloadHookPath") { ([string]$State.PostDownloadHookPath).Trim() } else { "" }
 
     return [ordered]@{
         Mode            = $mode
@@ -3936,6 +4140,11 @@ function Get-NormalizedStateObject {
         BandwidthScheduleLimit= if (Test-StateHas $State "BandwidthScheduleLimit") { [math]::Max(1024, (& $toInt $State.BandwidthScheduleLimit 2097152)) } else { 2097152 }
         CleanupScheduleEnabled= $cleanupScheduleEnabled
         CleanupRetentionDays= $cleanupRetentionDays
+        WebhookEnabled   = if (Test-StateHas $State "WebhookEnabled") { ConvertTo-SafeBool $State.WebhookEnabled $false } else { $false }
+        WebhookProvider  = $webhookProvider
+        WebhookUrl       = $webhookUrl
+        PostDownloadHookEnabled = if (Test-StateHas $State "PostDownloadHookEnabled") { ConvertTo-SafeBool $State.PostDownloadHookEnabled $false } else { $false }
+        PostDownloadHookPath = $postDownloadHookPath
         BandwidthEndpoint= $bandwidthEndpoint
         LiveApiMode      = $liveApiMode
         LiveApiEndpoint  = $liveApiEndpoint
@@ -3980,6 +4189,11 @@ function Get-DefaultWorkspaceState {
         BandwidthScheduleLimit= 2097152
         CleanupScheduleEnabled= $false
         CleanupRetentionDays= 30
+        WebhookEnabled   = $false
+        WebhookProvider  = "Discord"
+        WebhookUrl       = ""
+        PostDownloadHookEnabled = $false
+        PostDownloadHookPath = ""
         BandwidthEndpoint= "http://127.0.0.1:3128"
         LiveApiMode      = "Local"
         LiveApiEndpoint  = "http://127.0.0.1:3128"
@@ -4011,7 +4225,11 @@ function Read-PresetFile {
             return $null
         }
         $data = $raw | ConvertFrom-Json -ErrorAction Stop
-        return Get-NormalizedStateObject -State $data
+        $normalized = Get-NormalizedStateObject -State $data
+        # Webhook URLs are intentionally not exported in portable presets. Preserve the
+        # current local setting when a preset is imported instead of clearing it.
+        [void]$normalized.Remove("WebhookUrl")
+        return $normalized
     } catch {
         Log-Status "Preset file could not be loaded: $_" "ERROR"
         return $null
@@ -4023,6 +4241,9 @@ function Save-PresetFile {
     if (-not $State -or [string]::IsNullOrWhiteSpace($Path)) { return $false }
     try {
         $normalized = Get-NormalizedStateObject -State $State
+        # A preset can be shared; never put the DPAPI-protected webhook secret or its
+        # plaintext source value in an exported JSON file.
+        [void]$normalized.Remove("WebhookUrl")
         $targetDir = Split-Path -Parent $Path
         if (-not [string]::IsNullOrWhiteSpace($targetDir) -and -not (Test-Path -LiteralPath $targetDir)) {
             New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
@@ -4162,6 +4383,7 @@ function Get-ChangedWorkspaceAreas {
         "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray", "MaxChunks", "MaxPerHost", "MaxPerHostEnabled", "SpeedLimitEnabled", "SpeedLimit", "BandwidthScheduleEnabled", "BandwidthScheduleStart", "BandwidthScheduleEnd", "BandwidthScheduleLimit", "BandwidthEndpoint", "HashCheck", "PreserveFileDate", "ClipboardMonitor")
         "maintenance"          = @("CleanupScheduleEnabled", "CleanupRetentionDays")
         "hardening"            = @("PatchExe", "AutoUpdate", "DisableLocalAPI", "WriteVmOptions")
+        "integrations"         = @("WebhookEnabled", "WebhookProvider", "WebhookUrl", "PostDownloadHookEnabled", "PostDownloadHookPath")
         "workspace preferences"= @("GuiThemeName", "LanguageCode")
         "remote control"       = @("LiveApiMode", "LiveApiEndpoint", "LiveApiDevice")
     }
@@ -4310,6 +4532,13 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $ChkUpdate    -Name "Run update after completion" -Description "Launch JDownloader's update routine after the selected work finishes." -TabIndex 1
     Set-ControlMetadata -Control $ChkDisableAPI -Name "Disable deprecated local API" -Description "Block the legacy unauthenticated REST API on port 3128." -TabIndex 2
     Set-ControlMetadata -Control $ChkVmOptions  -Name "Write JVM options file" -Description "Create JDownloader2.vmoptions with performance flags." -TabIndex 3
+    Set-ControlMetadata -Control $ChkWebhookEnabled -Name "Download webhook notifications" -Description "Send completion and failure notifications to the selected Discord or Slack webhook." -TabIndex 4
+    Set-ControlMetadata -Control $CboWebhookProvider -Name "Webhook provider" -Description "Choose Discord or Slack for download notifications." -TabIndex 5
+    Set-ControlMetadata -Control $TxtWebhookUrl -Name "Webhook URL" -Description "Enter an HTTPS Discord or Slack incoming webhook URL; it is protected with Windows DPAPI in settings." -TabIndex 6
+    Set-ControlMetadata -Control $BtnWebhookTest -Name "Test download webhook" -Description "Send a test notification to the configured Discord or Slack webhook." -TabIndex 7
+    Set-ControlMetadata -Control $ChkPostDownloadHook -Name "Post-download hook" -Description "Run a hidden PowerShell, command, batch, or executable hook when a polled download completes or fails." -TabIndex 8
+    Set-ControlMetadata -Control $TxtPostDownloadHook -Name "Post-download hook path" -Description "Path to a .ps1, .cmd, .bat, or .exe hook." -TabIndex 9
+    Set-ControlMetadata -Control $BtnPostDownloadHookBrowse -Name "Browse post-download hook" -Description "Choose the script or executable used for post-download actions." -TabIndex 10
 
     Set-ControlMetadata -Control $RepairResetCfg.Button   -Name "Reset configuration" -Description "Back up and remove the full configuration folder." -TabIndex 0
     Set-ControlMetadata -Control $RepairResetTheme.Button -Name "Reset theme assets" -Description "Remove the current theme override files and icon assets." -TabIndex 0
@@ -4759,6 +4988,18 @@ $HardNote = New-Label -Parent $HardNoteSurface -LangKey "HardNote" -Location (Ne
 $HardResultSurface = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 656)) -Size (New-Object System.Drawing.Size(1040, 100))
 [void](New-Label -Parent $HardResultSurface -Text "This pass writes debloat flags across 8 config files, replaces banner images with blank PNGs, and optionally hardens the local API and JVM settings." -Location (New-Object System.Drawing.Point(24, 22)) -Size (New-Object System.Drawing.Size(992, 56)) -AutoSize $false -Tag "BodyMuted")
 
+$HardIntegration = New-Surface -Parent $HardeningCanvas -Location (New-Object System.Drawing.Point(0, 780)) -Size (New-Object System.Drawing.Size(1040, 224)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $HardIntegration -Text "Download integrations" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $HardIntegration -Text "Optional completion/failure notifications and a custom post-download script run from the live queue poller." -Location (New-Object System.Drawing.Point(24, 46)) -Size (New-Object System.Drawing.Size(780, 20)) -AutoSize $false -Tag "BodyMuted")
+$ChkWebhookEnabled = New-CheckBox -Parent $HardIntegration -Text "Notify on download completion or failure" -Location (New-Object System.Drawing.Point(24, 78)) -Checked $false
+$CboWebhookProvider = New-ComboBox -Parent $HardIntegration -Location (New-Object System.Drawing.Point(304, 74)) -Size (New-Object System.Drawing.Size(126, 32)) -Tag "Input" -Items @("Discord", "Slack") -SelectedIndex 0
+$TxtWebhookUrl = New-TextBox -Parent $HardIntegration -Location (New-Object System.Drawing.Point(446, 74)) -Size (New-Object System.Drawing.Size(430, 32)) -Tag "Input"
+$BtnWebhookTest = New-Button -Parent $HardIntegration -Text "Test webhook" -Location (New-Object System.Drawing.Point(888, 74)) -Size (New-Object System.Drawing.Size(128, 32)) -Tag "SecondaryButton"
+$ChkPostDownloadHook = New-CheckBox -Parent $HardIntegration -Text "Run post-download hook" -Location (New-Object System.Drawing.Point(24, 124)) -Checked $false
+$TxtPostDownloadHook = New-TextBox -Parent $HardIntegration -Location (New-Object System.Drawing.Point(304, 120)) -Size (New-Object System.Drawing.Size(572, 32)) -Tag "Input"
+$BtnPostDownloadHookBrowse = New-Button -Parent $HardIntegration -Text "Browse script" -Location (New-Object System.Drawing.Point(888, 120)) -Size (New-Object System.Drawing.Size(128, 32)) -Tag "SecondaryButton"
+$LblIntegrationStatus = New-Label -Parent $HardIntegration -Text "Webhooks are limited to Discord/Slack HTTPS hosts; hooks run hidden with queue context environment variables." -Location (New-Object System.Drawing.Point(24, 170)) -Size (New-Object System.Drawing.Size(992, 24)) -AutoSize $false -Tag "BodyMuted"
+
 function Update-HardeningProfile {
     if (-not $HardResultBadge -or -not $HardResultDetail -or -not $ChkExe -or -not $ChkUpdate) { return }
 
@@ -5061,6 +5302,87 @@ function Update-DownloadFolderState {
 # 9. CONFIRMATION DIALOG (Enhanced)
 # ==========================================
 
+function Get-DryRunDisplayValue {
+    param([string]$Key, $Value)
+    if ($Key -eq "WebhookUrl") {
+        if ([string]::IsNullOrWhiteSpace([string]$Value)) { return "(not configured)" }
+        try { return ([System.Uri]([string]$Value)).Host } catch { return "(configured)" }
+    }
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) { return "(empty)" }
+    return [string]$Value
+}
+
+function Get-WorkspaceDryRunDiff {
+    param($CurrentState)
+    $current = Get-NormalizedStateObject -State $CurrentState
+    $baseline = Get-WorkspaceComparisonBaseline
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("JDownloader 2 Ultimate Manager dry-run diff")
+    $lines.Add("Generated: $((Get-Date).ToString('o'))")
+    $lines.Add("")
+    if (-not $baseline) {
+        $lines.Add("No previous workspace exists; this run will establish the initial configuration.")
+    } else {
+        $lines.Add("Changed workspace settings:")
+        $allKeys = @($baseline.Keys) + @($current.Keys) | Sort-Object -Unique
+        $changeCount = 0
+        foreach ($key in $allKeys) {
+            $oldValue = if ($baseline.Contains($key)) { $baseline[$key] } else { $null }
+            $newValue = if ($current.Contains($key)) { $current[$key] } else { $null }
+            if ([string]$oldValue -ne [string]$newValue) {
+                $changeCount++
+                $lines.Add("- ${key}: $(Get-DryRunDisplayValue -Key $key -Value $oldValue)")
+                $lines.Add("+ ${key}: $(Get-DryRunDisplayValue -Key $key -Value $newValue)")
+            }
+        }
+        if ($changeCount -eq 0) { $lines.Add("(none; this will re-apply the saved workspace)") }
+    }
+    $lines.Add("")
+    $lines.Add("Predicted files, settings, and actions:")
+    if ($current.Mode -eq "Install") { $lines.Add("- Download and run the selected JDownloader installer, then detect the resulting install.") }
+    $lines.Add("- Back up the selected cfg folder before destructive or configuration changes.")
+    $lines.Add("- Write cfg/laf theme settings and the graphical UI configuration.")
+    $lines.Add("- Write GeneralSettings and tray settings for the selected download behavior.")
+    if ($current.PatchExe) { $lines.Add("- Patch the executable icon and write the hardening/debloat configuration flags.") }
+    if ($current.DisableLocalAPI -or $current.WriteVmOptions) { $lines.Add("- Apply the selected local API and JVM hardening options.") }
+    if ($current.BandwidthScheduleEnabled) { $lines.Add("- Register the two daily bandwidth Task Scheduler actions.") } else { $lines.Add("- Remove any existing daily bandwidth Task Scheduler actions.") }
+    if ($current.CleanupScheduleEnabled) { $lines.Add("- Register the nightly cleanup Task Scheduler action with $($current.CleanupRetentionDays)-day retention.") } else { $lines.Add("- Remove the nightly cleanup Task Scheduler action if it exists.") }
+    if ($current.WebhookEnabled) { $lines.Add("- Persist the selected webhook URL with Windows DPAPI protection and notify on live queue transitions.") }
+    if ($current.PostDownloadHookEnabled) { $lines.Add("- Run the selected post-download hook after a live queue completion or failure transition.") }
+    if ($current.AutoUpdate) { $lines.Add("- Launch JDownloader's built-in update routine after configuration work.") }
+    return $lines.ToArray()
+}
+
+function Show-WorkspaceDryRunDiff {
+    param($CurrentState)
+    $diffForm = New-Object System.Windows.Forms.Form
+    $diffForm.Text = "Workspace dry-run diff"
+    $diffForm.Size = New-Object System.Drawing.Size(860, 650)
+    $diffForm.MinimumSize = $diffForm.Size
+    $diffForm.StartPosition = "CenterParent"
+    $diffForm.FormBorderStyle = "Sizable"
+    $diffForm.ShowInTaskbar = $false
+    $diffForm.BackColor = (Get-ActivePalette).FormBack
+    $diffForm.ForeColor = (Get-ActivePalette).Fore
+    $viewer = New-Object System.Windows.Forms.TextBox
+    $viewer.Location = New-Object System.Drawing.Point(16, 16)
+    $viewer.Size = New-Object System.Drawing.Size(812, 548)
+    $viewer.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+    $viewer.Multiline = $true
+    $viewer.ReadOnly = $true
+    $viewer.ScrollBars = [System.Windows.Forms.ScrollBars]::Both
+    $viewer.WordWrap = $false
+    $viewer.Font = New-Object System.Drawing.Font("Consolas", 10)
+    $viewer.Text = (Get-WorkspaceDryRunDiff -CurrentState $CurrentState) -join [Environment]::NewLine
+    [void]$diffForm.Controls.Add($viewer)
+    $close = New-Button -Parent $diffForm -Text "Close" -Location (New-Object System.Drawing.Point(16, 574)) -Size (New-Object System.Drawing.Size(120, 34)) -Tag "SecondaryButton"
+    $close.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
+    $close.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $diffForm.CancelButton = $close
+    Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $diffForm
+    try { [void]$diffForm.ShowDialog($Form) } finally { $diffForm.Dispose() }
+}
+
 function Show-ConfirmationDialog {
     param($CurrentState)
     if ($CurrentState.Mode -eq "Modify" -and [string]::IsNullOrWhiteSpace($CurrentState.InstallPath)) {
@@ -5175,6 +5497,8 @@ function Show-ConfirmationDialog {
     $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $btnCancel = New-Button -Parent $cForm -Text (Get-LangValue -Key "Back" -Fallback "Back") -Location (New-Object System.Drawing.Point(244, 600)) -Size (New-Object System.Drawing.Size(110, 38)) -Tag "SecondaryButton"
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $btnDiff = New-Button -Parent $cForm -Text "View dry-run diff" -Location (New-Object System.Drawing.Point(368, 600)) -Size (New-Object System.Drawing.Size(166, 38)) -Tag "SecondaryButton"
+    $btnDiff.Add_Click({ Show-WorkspaceDryRunDiff -CurrentState $CurrentState })
     $cForm.AcceptButton = $btnOk
     $cForm.CancelButton = $btnCancel
 
@@ -5373,6 +5697,23 @@ $BtnDashUpdateBroker.Add_Click({
     Update-DashboardHealth
 })
 $BtnDashHealthRefresh.Add_Click({ Update-DashboardHealth })
+$ChkWebhookEnabled.Add_CheckedChanged({ Update-WorkspaceState })
+$CboWebhookProvider.Add_SelectedIndexChanged({ Update-WorkspaceState })
+$TxtWebhookUrl.Add_TextChanged({ Update-WorkspaceState })
+$ChkPostDownloadHook.Add_CheckedChanged({ Update-WorkspaceState })
+$TxtPostDownloadHook.Add_TextChanged({ Update-WorkspaceState })
+$BtnWebhookTest.Add_Click({ [void](Send-DownloadWebhook -Event Test -Force) })
+$BtnPostDownloadHookBrowse.Add_Click({
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    try {
+        $dlg.Title = "Choose a post-download hook"
+        $dlg.Filter = "Scripts and executables (*.ps1;*.cmd;*.bat;*.exe)|*.ps1;*.cmd;*.bat;*.exe|All files (*.*)|*.*"
+        if ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK) {
+            $TxtPostDownloadHook.Text = $dlg.FileName
+            $LblIntegrationStatus.Text = "Hook selected. It receives JD2_EVENT, JD2_LINK_NAME, JD2_HOST, and related environment variables."
+        }
+    } finally { $dlg.Dispose() }
+})
 $CboTheme.Add_SelectedIndexChanged({ Update-ThemePreview; Update-WorkspaceState })
 $CboIcons.Add_SelectedIndexChanged({ Update-ThemeSelectionSummary; Update-WorkspaceState })
 $BtnThemeBuilderPreview.Add_Click({ Update-CustomThemePreview })
@@ -5510,6 +5851,13 @@ $ToolTip.SetToolTip($BtnDashThemeJump, "Jump straight to theme previews and icon
 $ToolTip.SetToolTip($BtnDashRepairJump, "Jump straight to repair and recovery actions.")
 $ToolTip.SetToolTip($BtnDashUpdateBroker, "Check the official JDownloader revision and safely apply an update with rollback protection.")
 $ToolTip.SetToolTip($BtnDashHealthRefresh, "Refresh Java, JDownloader core, theme, hosts, firewall, and disk readiness checks.")
+$ToolTip.SetToolTip($ChkWebhookEnabled, "Send completion or failure messages when the live queue poller observes a state transition.")
+$ToolTip.SetToolTip($CboWebhookProvider, "Choose Discord or Slack; the webhook host must match the selected provider.")
+$ToolTip.SetToolTip($TxtWebhookUrl, "Discord or Slack HTTPS incoming webhook URL. Saved with Windows DPAPI protection.")
+$ToolTip.SetToolTip($BtnWebhookTest, "Send a test message without waiting for a download event.")
+$ToolTip.SetToolTip($ChkPostDownloadHook, "Run the selected hook hidden with JD2_* environment variables after completion or failure.")
+$ToolTip.SetToolTip($TxtPostDownloadHook, "Choose a .ps1, .cmd, .bat, or .exe post-download hook.")
+$ToolTip.SetToolTip($BtnPostDownloadHookBrowse, "Browse for a post-download hook script or executable.")
 $ToolTip.SetToolTip($BtnExec, "Apply the selected installation, theme, behavior, hardening, and repair settings in one run.")
 $ToolTip.SetToolTip($CboMode, "Choose whether the tool should refine an existing install or run a fresh deployment flow.")
 $ToolTip.SetToolTip($TxtPath, "Required for modify mode. Optional for clean install mode.")

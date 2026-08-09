@@ -46,6 +46,7 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Automatic removal of banners, premium ads, “Contribute” UI panels, and other clutter  
 - Optional executable icon patching using Resource Hacker  
 - Privacy enhancements to reduce unwanted promotional or telemetry-related components  
+- Optional Discord/Slack completion notifications and hidden post-download hooks with `JD2_*` environment variables
 
 ### 4. Configuration Management
 - Direct editing of JD2's JSON configuration files without launching the application  
@@ -79,6 +80,10 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Adds accounts and enables, disables, or removes selected accounts through the local API
 - Shows account validity and traffic information without persisting credentials in the manager
 - Leaves provider-specific OAuth consent in JDownloader's own external authorization flow
+
+### 8. Cross-Platform Core
+- `Tools/JD2CrossPlatform.ps1` provides a headless PowerShell Core path for Ubuntu/Debian and AppImage-adjacent installs
+- Detects common Linux cfg locations, snapshots cfg before edits, validates relative JSON paths, and performs atomic config writes
 
 ---
 
@@ -122,6 +127,7 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Toggle executable icon patching  
 - Enable automatic update after operations  
 - Debloat settings (enabled by default)  
+- Optionally configure a Discord or Slack webhook and a post-download hook script
 
 ### Repair Tools
 - Reset configuration files  
@@ -131,6 +137,12 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Browse cfg snapshots, restore one safely, or write a Safe-Mode diff report
 - Launch Safe Mode  
 - Perform full uninstall  
+
+### Cross-Platform CLI
+Use PowerShell 7+ on Linux to inspect or update a JDownloader cfg directory without loading the Windows GUI:
+
+    pwsh -File Tools/JD2CrossPlatform.ps1 -Detect
+    pwsh -File Tools/JD2CrossPlatform.ps1 -InstallPath "$HOME/JDownloader" -ConfigFile org.jdownloader.settings.GeneralSettings.json -SetKey maxsimultanedownloads -SetValue 5
 
 ### Live Control
 - For a local instance, enable JDownloader's deprecated local API in Advanced Settings and choose **Local API**
@@ -162,6 +174,8 @@ For repeatable deployments, export a preset from the dashboard or run:
 - **Settings Persistence:** Stored in `%LOCALAPPDATA%\JD2-Ultimate-Manager\settings.json` with legacy `ProgramData` settings still recognized  
 - **Portable Mode:** `-Portable` stores settings, logs, language cache, and presets beside the script in `.\JD2-UM\`  
 - **Preset Automation:** `-ExportPreset <path>` writes the current/default workspace to JSON; `-Silent -Preset <path>` applies it without opening the GUI  
+- **Dry-run review:** the Apply confirmation dialog includes a read-only setting and predicted-file diff before changes begin
+- **Sensitive settings:** webhook URLs are protected with Windows DPAPI in workspace settings and excluded from exported presets
 - **JSON Manipulation:** Edits JD2's config files directly, without requiring JD2 to be running
 - **Live API:** `Tools\JD2Api.psm1` provides a tested, injectable client for queue queries, controller actions, and LinkGrabber submission
 - **Dependencies:** Automatically downloads 7zr.exe and Resource Hacker when needed  
