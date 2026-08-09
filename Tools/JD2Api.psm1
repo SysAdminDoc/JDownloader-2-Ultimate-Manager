@@ -846,6 +846,21 @@ function Set-JD2AccountEnabled {
     return Invoke-JD2ApiMethod -Client $Client -Namespace "accountsV2" -Method "setEnabledState" -Parameters @($Enabled, $Ids)
 }
 
+function Set-JD2AccountRotation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Client,
+        [Parameter(Mandatory)][long[]]$Ids,
+        [ValidateRange(0, 2147483647)][int]$Index = 0
+    )
+    $uniqueIds = @($Ids | Select-Object -Unique)
+    if ($uniqueIds.Count -lt 2) { throw "At least two account ids are required for rotation." }
+    $activeId = [long]$uniqueIds[$Index % $uniqueIds.Count]
+    [void](Set-JD2AccountEnabled -Client $Client -Ids $uniqueIds -Enabled $false)
+    [void](Set-JD2AccountEnabled -Client $Client -Ids ([long[]]@($activeId)) -Enabled $true)
+    return [pscustomobject]@{ ActiveId = $activeId; Index = ($Index % $uniqueIds.Count); Count = $uniqueIds.Count }
+}
+
 function Remove-JD2Accounts {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -884,6 +899,7 @@ Export-ModuleMember -Function @(
     "Get-JD2Accounts",
     "Add-JD2Account",
     "Set-JD2AccountEnabled",
+    "Set-JD2AccountRotation",
     "Remove-JD2Accounts",
     "Test-JD2ApiConnection"
 )

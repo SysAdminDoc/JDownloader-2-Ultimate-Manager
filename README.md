@@ -80,6 +80,7 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 ### 7. Account Manager
 - Lists premium hoster accounts already configured in JDownloader
 - Adds accounts and enables, disables, or removes selected accounts through the local API
+- Saves a selected multi-account pool and optionally rotates the active premium account on a timed round-robin schedule
 - Shows account validity and traffic information without persisting credentials in the manager
 - Leaves provider-specific OAuth consent in JDownloader's own external authorization flow
 
@@ -159,6 +160,7 @@ Use PowerShell 7+ on Linux to inspect or update a JDownloader cfg directory with
 - Review account validity, traffic, and enabled state
 - Enter a hoster, username, and password, then choose **Add account**; the password field is cleared after a successful request
 - Select one or more rows to enable, disable, or remove them
+- Select two or more rows, choose **Use selected as pool**, then rotate now or enable timed rotation
 
 ---
 

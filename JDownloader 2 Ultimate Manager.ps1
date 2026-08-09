@@ -195,6 +195,9 @@ $script:LiveCaptchaBitmap = $null
 $script:LiveQueueState = @{}
 $script:LiveQueueNotificationPrimed = $false
 $script:LiveQueuePersistenceRestored = $false
+$script:AccountRotationPoolIds = @()
+$script:AccountRotationIndex = 0
+$script:AccountRotationTimer = $null
 $script:ToastWindows = New-Object System.Collections.Generic.List[object]
 $script:ToastsEnabled = $false
 
@@ -2968,7 +2971,7 @@ $PageDashboard    = New-PagePanel -CanvasHeight 930; [void]$MainPanel.Controls.A
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
 $PageLiveControl  = New-PagePanel -CanvasHeight 1370; [void]$MainPanel.Controls.Add($PageLiveControl)
-$PageAccounts     = New-PagePanel -CanvasHeight 660; [void]$MainPanel.Controls.Add($PageAccounts)
+$PageAccounts     = New-PagePanel -CanvasHeight 840; [void]$MainPanel.Controls.Add($PageAccounts)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
 $PageTheme        = New-PagePanel -CanvasHeight 970; [void]$MainPanel.Controls.Add($PageTheme)
 $PageBehavior     = New-PagePanel -CanvasHeight 1040; [void]$MainPanel.Controls.Add($PageBehavior)
@@ -3814,6 +3817,16 @@ $BtnAccountDisable = New-Button -Parent $AccountEditorSurface -Text "Disable sel
 $BtnAccountRemove = New-Button -Parent $AccountEditorSurface -Text "Remove selected" -Location (New-Object System.Drawing.Point(308, 120)) -Size (New-Object System.Drawing.Size(132, 30)) -Tag "DangerButton"
 [void](New-Label -Parent $AccountEditorSurface -Text "Passwords are sent only to the configured JDownloader API and are cleared after a successful add." -Location (New-Object System.Drawing.Point(466, 122)) -Size (New-Object System.Drawing.Size(540, 22)) -AutoSize $false -Tag "BodyMuted")
 
+$AccountRotationSurface = New-Surface -Parent $AccountsCanvas -Location (New-Object System.Drawing.Point(0, 652)) -Size (New-Object System.Drawing.Size(1040, 160)) -Tag "Callout"
+[void](New-Label -Parent $AccountRotationSurface -Text "Premium account pool" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $AccountRotationSurface -Text "Select two or more accounts above, save the pool, then rotate one active account at a time to spread host quotas." -Location (New-Object System.Drawing.Point(24, 46)) -Size (New-Object System.Drawing.Size(700, 20)) -AutoSize $false -Tag "BodyMuted")
+$BtnAccountPoolSet = New-Button -Parent $AccountRotationSurface -Text "Use selected as pool" -Location (New-Object System.Drawing.Point(24, 82)) -Size (New-Object System.Drawing.Size(164, 32)) -Tag "SecondaryButton"
+$BtnAccountRotateNow = New-Button -Parent $AccountRotationSurface -Text "Rotate now" -Location (New-Object System.Drawing.Point(200, 82)) -Size (New-Object System.Drawing.Size(116, 32)) -Tag "PrimaryButton"
+$ChkAccountRotation = New-CheckBox -Parent $AccountRotationSurface -Text "Auto-rotate" -Location (New-Object System.Drawing.Point(340, 88)) -Checked $false
+$NumAccountRotation = New-NumericUpDown -Parent $AccountRotationSurface -Location (New-Object System.Drawing.Point(444, 82)) -Min 5 -Max 1440 -Value 60 -Tag "Input"
+[void](New-Label -Parent $AccountRotationSurface -Text "minutes" -Location (New-Object System.Drawing.Point(548, 88)) -Tag "BodyMuted")
+$LblAccountRotationStatus = New-Label -Parent $AccountRotationSurface -Text "No account pool selected." -Location (New-Object System.Drawing.Point(640, 88)) -Size (New-Object System.Drawing.Size(360, 32)) -AutoSize $false -Tag "BodyMuted"
+
 function Format-AccountExpiry {
     param($Value)
     $milliseconds = 0L
@@ -3917,6 +3930,51 @@ function Remove-SelectedAccounts {
         Log-Status "Could not remove accounts: $($_.Exception.Message)" "WARN"
     }
 }
+
+function Set-AccountRotationPool {
+    $ids = @(Get-SelectedAccountIds)
+    if ($ids.Count -lt 2) { Log-Status "Select at least two accounts before saving a rotation pool." "WARN"; return $false }
+    $script:AccountRotationPoolIds = @([long[]]$ids)
+    $script:AccountRotationIndex = 0
+    $LblAccountRotationStatus.Text = "Pool saved: $($ids.Count) account(s)."
+    Log-Status "Premium account rotation pool saved with $($ids.Count) account(s)." "SUCCESS"
+    return $true
+}
+
+function Rotate-AccountPool {
+    $selected = @(Get-SelectedAccountIds)
+    if ($selected.Count -ge 2) {
+        $script:AccountRotationPoolIds = @([long[]]$selected)
+        $script:AccountRotationIndex = 0
+    }
+    $ids = @($script:AccountRotationPoolIds)
+    if ($ids.Count -lt 2) { Log-Status "Save at least two accounts as a rotation pool first." "WARN"; return $false }
+    try {
+        if (-not $script:LiveApiClient) { $script:LiveApiClient = New-LiveApiClientFromControls }
+        $rotation = Set-JD2AccountRotation -Client $script:LiveApiClient -Ids ([long[]]$ids) -Index $script:AccountRotationIndex
+        $script:AccountRotationIndex = ($rotation.Index + 1) % $rotation.Count
+        $LblAccountRotationStatus.Text = "Active account id $($rotation.ActiveId); next rotation in $([int]$NumAccountRotation.Value) minute(s)."
+        Log-Status "Premium account pool rotated to account id $($rotation.ActiveId)." "SUCCESS"
+        Refresh-Accounts
+        return $true
+    } catch {
+        Log-Status "Could not rotate the premium account pool: $($_.Exception.Message)" "WARN"
+        return $false
+    }
+}
+
+function Sync-AccountRotationTimer {
+    if (-not $script:AccountRotationTimer) { return }
+    $script:AccountRotationTimer.Stop()
+    $minutes = if ($NumAccountRotation) { [int]$NumAccountRotation.Value } else { 60 }
+    $script:AccountRotationTimer.Interval = [math]::Max(300000, $minutes * 60000)
+    if ($ChkAccountRotation -and $ChkAccountRotation.Checked) { $script:AccountRotationTimer.Start() }
+}
+
+$script:AccountRotationTimer = New-Object System.Windows.Forms.Timer
+$script:AccountRotationTimer.Interval = 3600000
+$script:AccountRotationTimer.Add_Tick({ if ($ChkAccountRotation -and $ChkAccountRotation.Checked) { [void](Rotate-AccountPool) } })
+[void]$GlobalTimers.Add($script:AccountRotationTimer)
 
 # --- Installation Page ---
 $InstallHero = New-Surface -Parent $InstallationCanvas -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(1040, 160))
@@ -4101,6 +4159,8 @@ function Apply-StateToControls {
         if (Test-StateHas $State "WebhookUrl") { $TxtWebhookUrl.Text = [string]$State.WebhookUrl }
         if (Test-StateHas $State "PostDownloadHookEnabled") { $ChkPostDownloadHook.Checked = ConvertTo-SafeBool $State.PostDownloadHookEnabled $false }
         if (Test-StateHas $State "PostDownloadHookPath") { $TxtPostDownloadHook.Text = [string]$State.PostDownloadHookPath }
+        if (Test-StateHas $State "AccountRotationEnabled") { $ChkAccountRotation.Checked = ConvertTo-SafeBool $State.AccountRotationEnabled $false }
+        if (Test-StateHas $State "AccountRotationMinutes") { Set-NumericSafe -Control $NumAccountRotation -Value $State.AccountRotationMinutes }
         if (Test-StateHas $State "LiveApiMode") {
             $liveMode = if ([string]$State.LiveApiMode -eq "MyJDownloader") { "MyJDownloader" } else { "Local API" }
             if ($CboLiveMode.Items.Contains($liveMode)) { $CboLiveMode.SelectedItem = $liveMode }
@@ -4182,6 +4242,8 @@ function Get-CurrentGuiState {
         WebhookUrl       = $TxtWebhookUrl.Text.Trim()
         PostDownloadHookEnabled = [bool]$ChkPostDownloadHook.Checked
         PostDownloadHookPath = $TxtPostDownloadHook.Text.Trim()
+        AccountRotationEnabled = [bool]$ChkAccountRotation.Checked
+        AccountRotationMinutes = [int]$NumAccountRotation.Value
         BandwidthEndpoint= $bandwidthEndpoint
         LiveApiMode      = $liveMode
         LiveApiEndpoint  = $liveEndpoint
@@ -4231,6 +4293,7 @@ function Get-NormalizedStateObject {
     $webhookProvider = if ([string]$State.WebhookProvider -eq "Slack") { "Slack" } else { "Discord" }
     $webhookUrl = if (Test-StateHas $State "WebhookUrl") { ([string]$State.WebhookUrl).Trim() } else { "" }
     $postDownloadHookPath = if (Test-StateHas $State "PostDownloadHookPath") { ([string]$State.PostDownloadHookPath).Trim() } else { "" }
+    $accountRotationMinutes = if (Test-StateHas $State "AccountRotationMinutes") { [math]::Max(5, [math]::Min(1440, (& $toInt $State.AccountRotationMinutes 60))) } else { 60 }
 
     return [ordered]@{
         Mode            = $mode
@@ -4266,6 +4329,8 @@ function Get-NormalizedStateObject {
         WebhookUrl       = $webhookUrl
         PostDownloadHookEnabled = if (Test-StateHas $State "PostDownloadHookEnabled") { ConvertTo-SafeBool $State.PostDownloadHookEnabled $false } else { $false }
         PostDownloadHookPath = $postDownloadHookPath
+        AccountRotationEnabled = if (Test-StateHas $State "AccountRotationEnabled") { ConvertTo-SafeBool $State.AccountRotationEnabled $false } else { $false }
+        AccountRotationMinutes = $accountRotationMinutes
         BandwidthEndpoint= $bandwidthEndpoint
         LiveApiMode      = $liveApiMode
         LiveApiEndpoint  = $liveApiEndpoint
@@ -4315,6 +4380,8 @@ function Get-DefaultWorkspaceState {
         WebhookUrl       = ""
         PostDownloadHookEnabled = $false
         PostDownloadHookPath = ""
+        AccountRotationEnabled = $false
+        AccountRotationMinutes = 60
         BandwidthEndpoint= "http://127.0.0.1:3128"
         LiveApiMode      = "Local"
         LiveApiEndpoint  = "http://127.0.0.1:3128"
@@ -4505,6 +4572,7 @@ function Get-ChangedWorkspaceAreas {
         "maintenance"          = @("CleanupScheduleEnabled", "CleanupRetentionDays")
         "hardening"            = @("PatchExe", "AutoUpdate", "DisableLocalAPI", "WriteVmOptions")
         "integrations"         = @("WebhookEnabled", "WebhookProvider", "WebhookUrl", "PostDownloadHookEnabled", "PostDownloadHookPath")
+        "account automation"  = @("AccountRotationEnabled", "AccountRotationMinutes")
         "workspace preferences"= @("GuiThemeName", "LanguageCode")
         "remote control"       = @("LiveApiMode", "LiveApiEndpoint", "LiveApiDevice")
     }
@@ -4719,6 +4787,10 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $BtnAccountEnable -Name "Enable selected accounts" -Description "Enable the selected JDownloader accounts." -TabIndex 30
     Set-ControlMetadata -Control $BtnAccountDisable -Name "Disable selected accounts" -Description "Disable the selected JDownloader accounts." -TabIndex 31
     Set-ControlMetadata -Control $BtnAccountRemove -Name "Remove selected accounts" -Description "Remove the selected JDownloader accounts after confirmation." -TabIndex 32
+    Set-ControlMetadata -Control $BtnAccountPoolSet -Name "Save premium account pool" -Description "Save the selected two or more accounts as the pool used by round-robin rotation." -TabIndex 33
+    Set-ControlMetadata -Control $BtnAccountRotateNow -Name "Rotate premium account pool now" -Description "Disable the current pool and enable the next account in the round-robin sequence." -TabIndex 34
+    Set-ControlMetadata -Control $ChkAccountRotation -Name "Automatic account rotation" -Description "Rotate the saved premium account pool on the configured interval." -TabIndex 35
+    Set-ControlMetadata -Control $NumAccountRotation -Name "Account rotation interval" -Description "Minutes between automatic premium account pool rotations." -TabIndex 36
 }
 
 # --- Themes Page ---
@@ -5912,6 +5984,10 @@ $BtnAccountAdd.Add_Click({ Add-AccountFromControls })
 $BtnAccountEnable.Add_Click({ Set-SelectedAccountsEnabled -Enabled $true })
 $BtnAccountDisable.Add_Click({ Set-SelectedAccountsEnabled -Enabled $false })
 $BtnAccountRemove.Add_Click({ Remove-SelectedAccounts })
+$BtnAccountPoolSet.Add_Click({ [void](Set-AccountRotationPool) })
+$BtnAccountRotateNow.Add_Click({ [void](Rotate-AccountPool) })
+$ChkAccountRotation.Add_CheckedChanged({ Sync-AccountRotationTimer; Update-WorkspaceState })
+$NumAccountRotation.Add_ValueChanged({ Sync-AccountRotationTimer; Update-WorkspaceState })
 $BtnRestoreWorkspace.Add_Click({
     if (-not $script:SavedWorkspaceState) { return }
     $shouldRestore = Show-ActionPrompt -Title "Restore last successful run" -Message "This replaces the current selections with the workspace that was last applied successfully." -ConfirmText "Restore selections" -ConfirmTag "PrimaryButton"
@@ -6042,6 +6118,10 @@ $ToolTip.SetToolTip($BtnLiveCaptchaSolve, "Submit the captcha answer to JDownloa
 $ToolTip.SetToolTip($BtnLiveCaptchaSkip, "Skip the current captcha job.")
 $ToolTip.SetToolTip($BtnLiveCaptchaRefresh, "Refresh pending captcha prompts.")
 $ToolTip.SetToolTip($AccountGrid, "Configured accounts are shown without passwords.")
+$ToolTip.SetToolTip($BtnAccountPoolSet, "Save two or more selected accounts as a round-robin premium pool.")
+$ToolTip.SetToolTip($BtnAccountRotateNow, "Disable the current pool and enable the next account now.")
+$ToolTip.SetToolTip($ChkAccountRotation, "Automatically rotate the saved account pool while the manager is open.")
+$ToolTip.SetToolTip($NumAccountRotation, "Choose the delay between automatic account rotations.")
 $ToolTip.SetToolTip($TxtAccountHoster, "Enter a JDownloader premium hoster identifier.")
 $ToolTip.SetToolTip($TxtAccountUsername, "Enter the hoster account username.")
 $ToolTip.SetToolTip($TxtAccountPassword, "Password is sent for this action and cleared after success.")

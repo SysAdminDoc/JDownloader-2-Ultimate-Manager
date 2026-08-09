@@ -217,6 +217,23 @@ Describe "JD2 API transport" {
         ($seen -join "`n") | Should -Match "accountsV2/removeAccounts"
     }
 
+    It "rotates a selected premium-account pool" {
+        $seen = New-Object System.Collections.Generic.List[string]
+        $invoker = {
+            param($uri)
+            [void]$seen.Add($uri)
+            return '{"data":true}'
+        }.GetNewClosure()
+        $client = New-JD2ApiClient -RequestInvoker $invoker
+
+        $rotation = Set-JD2AccountRotation -Client $client -Ids ([long[]](7, 8, 9)) -Index 1
+        $rotation.ActiveId | Should -Be 8
+        $rotation.Index | Should -Be 1
+        $rotation.Count | Should -Be 3
+        $seen.Count | Should -Be 2
+        ($seen -join "`n") | Should -Match "accountsV2/setEnabledState"
+    }
+
     It "connects to MyJDownloader and routes encrypted device calls" {
         $email = "User@Example.test"
         $passwordText = "test-password"
