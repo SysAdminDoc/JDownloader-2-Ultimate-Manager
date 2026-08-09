@@ -18,7 +18,10 @@ param(
     [string]$BandwidthInstallPath,
     [string]$BandwidthEndpoint,
     [ValidateRange(0, 2147483647)][int]$BandwidthLimit,
-    [switch]$BandwidthLimitEnabled
+    [switch]$BandwidthLimitEnabled,
+    [switch]$CleanupProfile,
+    [string]$CleanupInstallPath,
+    [ValidateRange(1, 3650)][int]$CleanupRetentionDays = 30
 )
 
 Set-StrictMode -Off
@@ -51,6 +54,9 @@ $script:BandwidthInstallPath = if ([string]::IsNullOrWhiteSpace($BandwidthInstal
 $script:BandwidthEndpoint = if ([string]::IsNullOrWhiteSpace($BandwidthEndpoint)) { "http://127.0.0.1:3128" } else { $BandwidthEndpoint }
 $script:BandwidthLimit = [int]$BandwidthLimit
 $script:BandwidthLimitEnabled = [bool]$BandwidthLimitEnabled
+$script:CleanupProfileRequest = [bool]$CleanupProfile
+$script:CleanupInstallPath = if ([string]::IsNullOrWhiteSpace($CleanupInstallPath)) { $null } else { $CleanupInstallPath }
+$script:CleanupRetentionDays = [math]::Max(1, [int]$CleanupRetentionDays)
 $script:ApiModulePath = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'Tools\JD2Api.psm1' } else { $null }
 $script:ApiModuleLoaded = $false
 if ($script:ApiModulePath -and (Test-Path -LiteralPath $script:ApiModulePath)) {
@@ -176,6 +182,8 @@ $script:LiveApiBusy = $false
 $script:LiveApiPollTimer = $null
 $script:LiveCaptchaJob = $null
 $script:LiveCaptchaBitmap = $null
+$script:ToastWindows = New-Object System.Collections.Generic.List[object]
+$script:ToastsEnabled = $false
 
 # ==========================================
 # 3. LANGUAGE & GUI THEME ENGINE
@@ -546,6 +554,45 @@ $ThemeDefinitions = [ordered]@{
         "JsonUrl"     = "https://raw.githubusercontent.com/ikoshura/JDownloader-Fluent-Theme/refs/heads/main/FlatMacDarkLaf.json"
         "PreviewUrl"  = "https://raw.githubusercontent.com/ikoshura/JDownloader-Fluent-Theme/main/Assets/MicaUpdate.png"
         "ThemeUrl"    = "https://github.com/ikoshura/JDownloader-Fluent-Theme"
+    }
+    "Catppuccin Mocha" = @{
+        "DisplayName" = "Catppuccin Mocha (native)"
+        "Desc"        = "A warm, high-contrast dark preset built into the manager with lavender accents and no theme download."
+        "LafID"       = "FLATLAF_DARK"
+        "JsonName"    = "CatppuccinMocha.json"
+        "JsonData"    = [ordered]@{
+            "lookandfeeltheme" = "FLATLAF_DARK"
+            "managerTheme" = "Catppuccin Mocha"
+            "colors" = [ordered]@{ background = "#1e1e2e"; surface = "#313244"; foreground = "#cdd6f4"; accent = "#cba6f7"; border = "#585b70" }
+        }
+        "PreviewColors" = @{ Background = "#1e1e2e"; Surface = "#313244"; Foreground = "#cdd6f4"; Accent = "#cba6f7" }
+        "ThemeUrl"    = "https://catppuccin.com"
+    }
+    "OLED Black" = @{
+        "DisplayName" = "OLED Black (native)"
+        "Desc"        = "A true-black preset for OLED panels with restrained gray surfaces and a cool blue accent."
+        "LafID"       = "FLATLAF_DARK"
+        "JsonName"    = "OledBlack.json"
+        "JsonData"    = [ordered]@{
+            "lookandfeeltheme" = "FLATLAF_DARK"
+            "managerTheme" = "OLED Black"
+            "colors" = [ordered]@{ background = "#000000"; surface = "#0d0d0d"; foreground = "#f2f4f8"; accent = "#78a9ff"; border = "#393939" }
+        }
+        "PreviewColors" = @{ Background = "#000000"; Surface = "#0d0d0d"; Foreground = "#f2f4f8"; Accent = "#78a9ff" }
+        "ThemeUrl"    = "https://github.com/SysAdminDoc/JDownloader-2-Ultimate-Manager"
+    }
+    "Nord" = @{
+        "DisplayName" = "Nord (native)"
+        "Desc"        = "A cool polar-night preset with frost-blue controls and calm contrast for long sessions."
+        "LafID"       = "FLATLAF_DARK"
+        "JsonName"    = "Nord.json"
+        "JsonData"    = [ordered]@{
+            "lookandfeeltheme" = "FLATLAF_DARK"
+            "managerTheme" = "Nord"
+            "colors" = [ordered]@{ background = "#2e3440"; surface = "#3b4252"; foreground = "#eceff4"; accent = "#88c0d0"; border = "#4c566a" }
+        }
+        "PreviewColors" = @{ Background = "#2e3440"; Surface = "#3b4252"; Foreground = "#eceff4"; Accent = "#88c0d0" }
+        "ThemeUrl"    = "https://www.nordtheme.com"
     }
 }
 
@@ -933,6 +980,8 @@ function Cleanup-Resources {
         try { $LiveCaptchaImage.Image = $null } catch {}
     }
     $ThemeImageCache.Clear()
+    foreach ($toast in @($script:ToastWindows)) { try { $toast.Close() } catch {} }
+    $script:ToastWindows.Clear()
     $GlobalTimers.Clear()
     $GlobalJobs.Clear()
 }
@@ -1265,6 +1314,139 @@ function Backup-JD {
             Select-Object -Skip $KeepCount |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     } catch {}
+    return $backupRoot
+}
+
+function Get-JDBackupSnapshots {
+    param([string]$InstallPath)
+    if ([string]::IsNullOrWhiteSpace($InstallPath)) { return @() }
+    $backupParent = Join-Path $InstallPath 'cfg-backup'
+    if (-not (Test-Path -LiteralPath $backupParent)) { return @() }
+    return @(Get-ChildItem -LiteralPath $backupParent -Directory -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+}
+
+function Restore-JDBackupSnapshot {
+    param([string]$InstallPath, [string]$SnapshotPath)
+    if ([string]::IsNullOrWhiteSpace($InstallPath) -or [string]::IsNullOrWhiteSpace($SnapshotPath)) { return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $InstallPath 'JDownloader2.exe'))) {
+        Log-Status "Restore refused: target does not contain JDownloader2.exe." "WARN"
+        return $false
+    }
+    $backupParent = Join-Path $InstallPath 'cfg-backup'
+    try {
+        $parentResolved = (Resolve-Path -LiteralPath $backupParent -ErrorAction Stop).Path.TrimEnd('\') + '\'
+        $snapshotResolved = (Resolve-Path -LiteralPath $SnapshotPath -ErrorAction Stop).Path
+        if (-not $snapshotResolved.StartsWith($parentResolved, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Snapshot is outside the selected install backup folder." }
+        if (-not (Get-Item -LiteralPath $snapshotResolved -ErrorAction Stop).PSIsContainer) { throw "Snapshot path is not a directory." }
+        Kill-JDownloader
+        [void](Backup-JD -InstallPath $InstallPath)
+        $cfgPath = Join-Path $InstallPath 'cfg'
+        if (Test-Path -LiteralPath $cfgPath) { Remove-Item -LiteralPath $cfgPath -Recurse -Force -ErrorAction Stop }
+        New-Item -ItemType Directory -Path $cfgPath -Force -ErrorAction Stop | Out-Null
+        Get-ChildItem -LiteralPath $snapshotResolved -Force -ErrorAction Stop | Copy-Item -Destination $cfgPath -Recurse -Force -ErrorAction Stop
+        Log-Status "Configuration restored from $([System.IO.Path]::GetFileName($snapshotResolved))." "SUCCESS"
+        return $true
+    } catch {
+        Log-Status "Configuration restore failed: $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
+function New-JDSafeModeDiff {
+    param([string]$InstallPath)
+    $snapshots = @(Get-JDBackupSnapshots -InstallPath $InstallPath)
+    if ($snapshots.Count -eq 0) { Log-Status "No cfg backup exists for a Safe-Mode diff yet." "WARN"; return $null }
+    $snapshot = $snapshots[0].FullName
+    $cfgPath = Join-Path $InstallPath 'cfg'
+    $currentFiles = @{}
+    $backupFiles = @{}
+    if (Test-Path -LiteralPath $cfgPath) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $cfgPath -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+            $relative = $file.FullName.Substring($cfgPath.TrimEnd('\').Length).TrimStart('\')
+            try { $currentFiles[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256 -ErrorAction Stop).Hash } catch {}
+        }
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $snapshot -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+        $relative = $file.FullName.Substring($snapshot.TrimEnd('\').Length).TrimStart('\')
+        try { $backupFiles[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256 -ErrorAction Stop).Hash } catch {}
+    }
+    $added = @($currentFiles.Keys | Where-Object { -not $backupFiles.ContainsKey($_) } | Sort-Object)
+    $removed = @($backupFiles.Keys | Where-Object { -not $currentFiles.ContainsKey($_) } | Sort-Object)
+    $changed = @($currentFiles.Keys | Where-Object { $backupFiles.ContainsKey($_) -and $backupFiles[$_] -ne $currentFiles[$_] } | Sort-Object)
+    $reportPath = Join-Path $WorkDir ("safe-mode-diff-{0}.txt" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    $report = @(
+        "JDownloader 2 Ultimate Manager Safe-Mode configuration diff"
+        "Install: $InstallPath"
+        "Compared with: $snapshot"
+        "Generated: $((Get-Date).ToString('o'))"
+        ""
+        "Added or newly created ($($added.Count)):"
+        $(if ($added.Count) { $added | ForEach-Object { "+ $_" } } else { "(none)" })
+        ""
+        "Removed ($($removed.Count)):"
+        $(if ($removed.Count) { $removed | ForEach-Object { "- $_" } } else { "(none)" })
+        ""
+        "Changed ($($changed.Count)):"
+        $(if ($changed.Count) { $changed | ForEach-Object { "* $_" } } else { "(none)" })
+    )
+    $report | Set-Content -LiteralPath $reportPath -Encoding UTF8 -ErrorAction Stop
+    Log-Status "Safe-Mode diff written to $reportPath." "SUCCESS"
+    return $reportPath
+}
+
+function Show-ToastNotification {
+    param([string]$Text, [ValidateSet("INFO", "SUCCESS", "WARN", "ERROR")][string]$Type = "INFO")
+    if (-not $script:ToastsEnabled -or -not $Form -or -not $Form.IsHandleCreated -or [string]::IsNullOrWhiteSpace($Text)) { return }
+    $palette = Get-ActivePalette
+    $accent = switch ($Type) {
+        "SUCCESS" { $palette.Success }
+        "WARN" { $palette.Warning }
+        "ERROR" { $palette.Danger }
+        default { $palette.Accent }
+    }
+    $toast = New-Object System.Windows.Forms.Form
+    $toast.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $toast.ShowInTaskbar = $false
+    $toast.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $toast.Size = New-Object System.Drawing.Size(380, 86)
+    $toast.BackColor = $palette.SurfaceAlt
+    $toast.ForeColor = $palette.Fore
+    $toast.Opacity = 0.96
+    $workArea = [System.Windows.Forms.Screen]::FromControl($Form).WorkingArea
+    $toast.Location = New-Object System.Drawing.Point(($workArea.Right - $toast.Width - 22), ($workArea.Bottom - $toast.Height - 22))
+    $stripe = New-Panel -Parent $toast -Location (New-Object System.Drawing.Point(0, 0)) -Size (New-Object System.Drawing.Size(6, 86)) -BackColor $accent
+    [void]$stripe
+    [void](New-Label -Parent $toast -Text $Text -Location (New-Object System.Drawing.Point(20, 18)) -Size (New-Object System.Drawing.Size(338, 48)) -AutoSize $false -Tag "MutedStrong")
+    $toastTimer = New-Object System.Windows.Forms.Timer
+    $toastTimer.Interval = 4200
+    $toastTimer.Add_Tick({ $toastTimer.Stop(); $toast.Close() })
+    $toast.Add_FormClosed({
+        try { $toastTimer.Stop(); $toastTimer.Dispose() } catch {}
+        try { $script:ToastWindows.Remove($toast) } catch {}
+        try { $toast.Dispose() } catch {}
+    })
+    [void]$script:ToastWindows.Add($toast)
+    Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $toast
+    $toast.Show($Form)
+    $toastTimer.Start()
+}
+
+function Test-JDIconPackInstall {
+    param([string]$InstallPath, [string]$TargetIconSet)
+    $iconRoot = Join-Path $InstallPath "themes\$TargetIconSet\org\jdownloader\images"
+    $files = @()
+    if (Test-Path $iconRoot) {
+        $files = @(Get-ChildItem -Path $iconRoot -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension.ToLowerInvariant() -in @('.png', '.gif', '.svg', '.ico') })
+    }
+    $names = @($files | ForEach-Object { $_.BaseName.ToLowerInvariant() })
+    $requiredKeys = @('download', 'pause', 'stop', 'add', 'delete')
+    $missing = @($requiredKeys | Where-Object { $names -notcontains $_ })
+    return [pscustomobject]@{
+        Valid      = ($files.Count -ge 12 -and $missing.Count -eq 0)
+        ImageCount = $files.Count
+        MissingKeys= $missing
+        Root       = $iconRoot
+    }
 }
 
 function Task-ExtractIcons {
@@ -1299,6 +1481,12 @@ function Task-ExtractIcons {
     }
     try {
         Copy-Item "$($foundImages.FullName)\*" $targetImages -Recurse -Force -ErrorAction Stop
+        $validation = Test-JDIconPackInstall -InstallPath $InstallPath -TargetIconSet $TargetIconSet
+        if ($validation.Valid) {
+            Log-Status ("Icon pack '{0}' installed and validated ({1} image files)." -f $TargetIconSet, $validation.ImageCount) "SUCCESS"
+        } else {
+            Log-Status ("Icon pack '{0}' installed with validation warnings: {1} image files; missing keys: {2}." -f $TargetIconSet, $validation.ImageCount, ($validation.MissingKeys -join ', ')) "WARN"
+        }
     } catch {
         Log-Status ("Failed to copy icon files into {0}: {1}" -f $targetImages, $_) "WARN"
     } finally {
@@ -1706,6 +1894,69 @@ function Trigger-Update {
     }
 }
 
+function Get-JDCoreUpdateStatus {
+    param([string]$InstallPath)
+    $localRevision = 0L
+    $revFile = if ($InstallPath) { Join-Path $InstallPath 'update\versioninfo\JD\rev' } else { $null }
+    if ($revFile -and (Test-Path -LiteralPath $revFile)) { try { $localRevision = [int64]((Get-Content -LiteralPath $revFile -Raw -ErrorAction Stop).Trim()) } catch {} }
+    try {
+        $response = Invoke-WebRequest -Uri 'https://svn.jdownloader.org/build.php' -UseBasicParsing -TimeoutSec 12 -ErrorAction Stop
+        $match = [regex]::Match([string]$response.Content, 'Latest Revision:\s*\|\s*(?<revision>\d+)')
+        if (-not $match.Success) { throw "The official revision page did not return a revision." }
+        $latestRevision = [int64]$match.Groups['revision'].Value
+        return [pscustomobject]@{
+            LocalRevision  = $localRevision
+            LatestRevision = $latestRevision
+            UpdateAvailable= ($localRevision -gt 0 -and $latestRevision -gt $localRevision)
+            State          = if ($localRevision -eq 0) { 'Unknown' } elseif ($latestRevision -gt $localRevision) { 'Update available' } else { 'Current' }
+            Detail         = if ($localRevision -eq 0) { "Latest public revision: $latestRevision." } elseif ($latestRevision -gt $localRevision) { "Revision $latestRevision is newer than local $localRevision." } else { "Local revision $localRevision is current." }
+        }
+    } catch {
+        return [pscustomobject]@{ LocalRevision = $localRevision; LatestRevision = 0; UpdateAvailable = $false; State = 'Unknown'; Detail = "Could not query the official revision service: $($_.Exception.Message)" }
+    }
+}
+
+function Invoke-JDUpdateBroker {
+    param([string]$InstallPath)
+    if ([string]::IsNullOrWhiteSpace($InstallPath) -or -not (Test-Path -LiteralPath (Join-Path $InstallPath 'JDownloader2.exe'))) {
+        Log-Status "Update broker needs a valid JDownloader installation." "WARN"
+        return $false
+    }
+    $status = Get-JDCoreUpdateStatus -InstallPath $InstallPath
+    Log-Status $status.Detail $(if ($status.State -eq 'Update available') { 'INFO' } elseif ($status.State -eq 'Unknown') { 'WARN' } else { 'SUCCESS' })
+    if ($status.State -ne 'Update available') { return ($status.State -eq 'Current') }
+
+    $rollbackDir = Join-Path $WorkDir ("jd-core-rollback-{0}" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    try {
+        New-Item -ItemType Directory -Path $rollbackDir -Force -ErrorAction Stop | Out-Null
+        foreach ($name in @('JDownloader2.exe', 'JDownloader.jar')) {
+            $source = Join-Path $InstallPath $name
+            if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $rollbackDir $name) -Force -ErrorAction Stop }
+        }
+        [void](Backup-JD -InstallPath $InstallPath)
+        Trigger-Update -InstallPath $InstallPath
+        Start-Sleep -Seconds 5
+        $exe = Join-Path $InstallPath 'JDownloader2.exe'
+        $launch = Start-Process -FilePath $exe -ArgumentList '-h' -WindowStyle Hidden -PassThru -ErrorAction Stop
+        if (-not $launch.WaitForExit(12000)) { try { $launch.Kill() } catch {} }
+        if (-not (Test-Path -LiteralPath $exe) -or (Get-Item -LiteralPath $exe).Length -le 0) { throw "JDownloader did not remain launchable after the update." }
+        Log-Status "Update broker completed; JDownloader core passed the launch smoke check." "SUCCESS"
+        Show-ToastNotification -Text "JDownloader core update completed." -Type SUCCESS
+        return $true
+    } catch {
+        Log-Status "JDownloader update failed; restoring the pre-update core files: $($_.Exception.Message)" "ERROR"
+        foreach ($name in @('JDownloader2.exe', 'JDownloader.jar')) {
+            $backup = Join-Path $rollbackDir $name
+            $target = Join-Path $InstallPath $name
+            if (Test-Path -LiteralPath $backup) { try { Copy-Item -LiteralPath $backup -Destination $target -Force -ErrorAction SilentlyContinue } catch {} }
+        }
+        Show-ToastNotification -Text "JDownloader update rolled back." -Type ERROR
+        return $false
+    } finally {
+        if ($rollbackDir -and (Test-Path -LiteralPath $rollbackDir)) { Remove-Item -LiteralPath $rollbackDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Run-Audit {
     param($InstallPath)
     if ([string]::IsNullOrWhiteSpace($InstallPath) -or -not (Test-Path $InstallPath)) {
@@ -1796,6 +2047,57 @@ function Run-Audit {
     }
 }
 
+function Get-JDHealthReport {
+    param([string]$InstallPath)
+    $checks = [ordered]@{}
+    if ([string]::IsNullOrWhiteSpace($InstallPath) -or -not (Test-Path -LiteralPath $InstallPath)) {
+        foreach ($name in @('Java', 'JDownloader core', 'Theme engine', 'Hosts file', 'Firewall', 'Disk space')) {
+            $checks[$name] = [pscustomobject]@{ State = 'Unknown'; Detail = 'Select an existing JDownloader installation.' }
+        }
+        return [pscustomobject]@{ InstallPath = $InstallPath; Checks = $checks }
+    }
+
+    $bundledJava = Test-Path -LiteralPath (Join-Path $InstallPath 'jre\bin\java.exe')
+    $systemJava = $false
+    try { $systemJava = [bool](Get-Command java.exe -ErrorAction SilentlyContinue) } catch {}
+    if ($bundledJava) { $checks['Java'] = [pscustomobject]@{ State = 'Ready'; Detail = 'Bundled JRE detected.' } }
+    elseif ($systemJava) { $checks['Java'] = [pscustomobject]@{ State = 'Ready'; Detail = 'System Java detected.' } }
+    else { $checks['Java'] = [pscustomobject]@{ State = 'Warning'; Detail = 'No bundled or system Java found.' } }
+
+    $hasExe = Test-Path -LiteralPath (Join-Path $InstallPath 'JDownloader2.exe')
+    $hasJar = Test-Path -LiteralPath (Join-Path $InstallPath 'JDownloader.jar')
+    $revFile = Join-Path $InstallPath 'update\versioninfo\JD\rev'
+    $revision = if (Test-Path -LiteralPath $revFile) { try { (Get-Content -LiteralPath $revFile -Raw -ErrorAction Stop).Trim() } catch { '' } } else { '' }
+    if ($hasExe -and $hasJar) { $checks['JDownloader core'] = [pscustomobject]@{ State = 'Ready'; Detail = if ($revision) { "Core revision $revision." } else { 'Executable and JAR present.' } } }
+    else { $checks['JDownloader core'] = [pscustomobject]@{ State = 'Error'; Detail = 'JDownloader2.exe or JDownloader.jar is missing.' } }
+
+    $lafPath = Join-Path $InstallPath 'cfg\laf'
+    $lafFiles = if (Test-Path -LiteralPath $lafPath) { @(Get-ChildItem -LiteralPath $lafPath -Filter '*.json' -File -ErrorAction SilentlyContinue) } else { @() }
+    if ($lafFiles.Count -gt 0) { $checks['Theme engine'] = [pscustomobject]@{ State = 'Ready'; Detail = "{0} theme configuration file(s) installed." -f $lafFiles.Count } }
+    else { $checks['Theme engine'] = [pscustomobject]@{ State = 'Warning'; Detail = 'No cfg/laf theme configuration found yet.' } }
+
+    $hostsPath = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\drivers\etc\hosts' } else { $null }
+    if ($hostsPath -and (Test-Path -LiteralPath $hostsPath)) { $checks['Hosts file'] = [pscustomobject]@{ State = 'Ready'; Detail = 'Windows hosts file is readable.' } }
+    else { $checks['Hosts file'] = [pscustomobject]@{ State = 'Warning'; Detail = 'Windows hosts file was not found.' } }
+
+    try {
+        $profiles = @(Get-NetFirewallProfile -ErrorAction Stop)
+        $disabled = @($profiles | Where-Object { -not $_.Enabled })
+        if ($disabled.Count -eq 0) { $checks['Firewall'] = [pscustomobject]@{ State = 'Ready'; Detail = 'All available firewall profiles are enabled.' } }
+        else { $checks['Firewall'] = [pscustomobject]@{ State = 'Warning'; Detail = "{0} firewall profile(s) are disabled." -f $disabled.Count } }
+    } catch { $checks['Firewall'] = [pscustomobject]@{ State = 'Unknown'; Detail = 'Firewall status is unavailable without the networking cmdlet.' } }
+
+    try {
+        $driveName = (Split-Path -Path $InstallPath -Qualifier).TrimEnd(':')
+        $drive = Get-PSDrive -Name $driveName -ErrorAction Stop
+        $freeGb = [double]$drive.Free / 1GB
+        $diskState = if ($freeGb -ge 1) { 'Ready' } elseif ($freeGb -ge 0.25) { 'Warning' } else { 'Error' }
+        $checks['Disk space'] = [pscustomobject]@{ State = $diskState; Detail = "{0:N1} GB free on {1}." -f $freeGb, $driveName }
+    } catch { $checks['Disk space'] = [pscustomobject]@{ State = 'Unknown'; Detail = 'Disk free space could not be read.' } }
+
+    return [pscustomobject]@{ InstallPath = $InstallPath; Checks = $checks }
+}
+
 function Execute-Operations {
     param($GUI_State)
     $JDPath = $GUI_State.InstallPath
@@ -1865,7 +2167,14 @@ function Execute-Operations {
             $Theme = $ThemeDefinitions[$GUI_State.ThemeName]
             $lafPath = "$cfgPath\laf"; if (-not (Test-Path $lafPath)) { New-Item -ItemType Directory -Path $lafPath -Force | Out-Null }
             
-            Download-File -Url $Theme.JsonUrl -Destination "$lafPath\$($Theme.JsonName)" | Out-Null
+            $themeConfigPath = Join-Path $lafPath $Theme.JsonName
+            if ($Theme.JsonData) {
+                [void](Write-JsonAtomic -Path $themeConfigPath -Payload $Theme.JsonData)
+            } elseif ($Theme.JsonUrl) {
+                Download-File -Url $Theme.JsonUrl -Destination $themeConfigPath | Out-Null
+            } else {
+                Log-Status "Theme '$($GUI_State.ThemeName)' has no configuration source." "WARN"
+            }
             
             if ($IconDefinitions.Contains($GUI_State.IconPack)) {
                 $IconDef = $IconDefinitions[$GUI_State.IconPack]
@@ -1914,6 +2223,13 @@ function Execute-Operations {
                 -NormalLimitEnabled ([bool]$GUI_State.SpeedLimitEnabled) `
                 -Endpoint ([string]$GUI_State.BandwidthEndpoint)
             if (-not $scheduleSynced) { Log-Status "Bandwidth schedule could not be synchronized; the base bandwidth settings were still applied." "WARN" }
+        }
+        if ($GUI_State.Contains("CleanupScheduleEnabled")) {
+            $cleanupSynced = Sync-CleanupSchedule `
+                -InstallPath $JDPath `
+                -Enabled ([bool]$GUI_State.CleanupScheduleEnabled) `
+                -RetentionDays ([int]$GUI_State.CleanupRetentionDays)
+            if (-not $cleanupSynced) { Log-Status "Nightly cleanup schedule could not be synchronized." "WARN" }
         }
 
         try {
@@ -2122,6 +2438,95 @@ function Sync-BandwidthSchedule {
     }
 }
 
+function Get-CleanupScheduleTaskName {
+    return "JDownloader 2 UM - Nightly Cleanup"
+}
+
+function New-CleanupScheduledAction {
+    param([Parameter(Mandatory)][string]$InstallPath, [ValidateRange(1, 3650)][int]$RetentionDays = 30)
+    if ([string]::IsNullOrWhiteSpace($PSCommandPath)) { throw "The manager path is unavailable for scheduled cleanup actions." }
+    if ([System.IO.Path]::GetExtension($PSCommandPath) -ieq ".ps1") {
+        $scriptLiteral = "'" + ($PSCommandPath -replace "'", "''") + "'"
+        $installLiteral = "'" + ($InstallPath -replace "'", "''") + "'"
+        $commandText = "& $scriptLiteral -CleanupProfile -CleanupInstallPath $installLiteral -CleanupRetentionDays $RetentionDays"
+        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
+        $powershellPath = (Get-Command powershell.exe -CommandType Application -ErrorAction Stop).Source
+        $actionArguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
+        return New-ScheduledTaskAction -Execute $powershellPath -Argument $actionArguments -WorkingDirectory (Split-Path -Parent $PSCommandPath)
+    }
+    $installArgument = '"' + $InstallPath.Replace('"', '\"') + '"'
+    return New-ScheduledTaskAction -Execute $PSCommandPath -Argument "-CleanupProfile -CleanupInstallPath $installArgument -CleanupRetentionDays $RetentionDays" -WorkingDirectory (Split-Path -Parent $PSCommandPath)
+}
+
+function Invoke-ScheduledCleanup {
+    param([string]$InstallPath, [ValidateRange(1, 3650)][int]$RetentionDays = 30)
+    if ([string]::IsNullOrWhiteSpace($InstallPath) -or -not (Test-Path -LiteralPath $InstallPath)) {
+        Log-Status "Scheduled cleanup skipped: install path is unavailable." "WARN"
+        return 2
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $InstallPath 'JDownloader2.exe'))) {
+        Log-Status "Scheduled cleanup refused: target does not contain JDownloader2.exe." "WARN"
+        return 2
+    }
+    $cutoff = (Get-Date).AddDays(-1 * [math]::Max(1, $RetentionDays))
+    $removed = 0
+    $fileTargets = @(
+        @{ Root = (Join-Path $InstallPath 'tmp'); Filter = $null }
+        @{ Root = (Join-Path $InstallPath 'cfg\tmp'); Filter = $null }
+        @{ Root = (Join-Path $InstallPath 'logs'); Filter = $null }
+        @{ Root = (Join-Path $InstallPath 'update'); Filter = '*.tmp' }
+    )
+    foreach ($target in $fileTargets) {
+        if (-not (Test-Path -LiteralPath $target.Root)) { continue }
+        try {
+            $files = if ($target.Filter) {
+                Get-ChildItem -LiteralPath $target.Root -Filter $target.Filter -File -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Get-ChildItem -LiteralPath $target.Root -File -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            foreach ($file in @($files | Where-Object { $_.LastWriteTime -lt $cutoff })) {
+                try { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop; $removed++ } catch {}
+            }
+        } catch {}
+    }
+    $backupParent = Join-Path $InstallPath 'cfg-backup'
+    if (Test-Path -LiteralPath $backupParent) {
+        foreach ($snapshot in @(Get-ChildItem -LiteralPath $backupParent -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $cutoff })) {
+            try { Remove-Item -LiteralPath $snapshot.FullName -Recurse -Force -ErrorAction Stop; $removed++ } catch {}
+        }
+    }
+    Log-Status ("Scheduled cleanup removed {0} stale item(s) older than {1} day(s)." -f $removed, $RetentionDays) "SUCCESS"
+    return 0
+}
+
+function Sync-CleanupSchedule {
+    param([Parameter(Mandatory)][string]$InstallPath, [bool]$Enabled, [ValidateRange(1, 3650)][int]$RetentionDays = 30)
+    $taskName = Get-CleanupScheduleTaskName
+    $registerCommand = Get-Command Register-ScheduledTask -CommandType Cmdlet -ErrorAction SilentlyContinue
+    if (-not $registerCommand) {
+        Log-Status "Windows Task Scheduler cmdlets are unavailable; nightly cleanup was not configured." "WARN"
+        return $false
+    }
+    if (-not $Enabled) {
+        try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        Log-Status "Nightly cleanup disabled." "INFO"
+        return $true
+    }
+    try {
+        $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+        $action = New-CleanupScheduledAction -InstallPath $InstallPath -RetentionDays $RetentionDays
+        $trigger = New-ScheduledTaskTrigger -Daily -At ([datetime]::Today.AddHours(2).AddMinutes(30))
+        try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+        Log-Status ("Nightly cleanup scheduled at 02:30 with {0}-day retention." -f $RetentionDays) "SUCCESS"
+        return $true
+    } catch {
+        try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        Log-Status "Could not configure nightly cleanup: $($_.Exception.Message)" "WARN"
+        return $false
+    }
+}
+
 # ==========================================
 # 8. GUI CONSTRUCTION (Premium Workspace)
 # ==========================================
@@ -2267,6 +2672,23 @@ function New-ComboBox {
     $c.FlatStyle = "Flat"
     $c.IntegralHeight = $false
     $c.Font = New-Object System.Drawing.Font("Segoe UI", 11)
+    $c.DrawMode = [System.Windows.Forms.DrawMode]::OwnerDrawFixed
+    $c.ItemHeight = 28
+    $c.DropDownHeight = 320
+    $c.Add_DrawItem({
+        param($sender, $eventArgs)
+        if ($eventArgs.Index -lt 0) { return }
+        $palette = Get-ActivePalette
+        $selected = (($eventArgs.State -band [System.Windows.Forms.DrawItemState]::Selected) -eq [System.Windows.Forms.DrawItemState]::Selected)
+        $background = if ($selected) { $palette.AccentSoft } else { $palette.InputBack }
+        $foreground = $palette.Fore
+        $backgroundBrush = New-Object System.Drawing.SolidBrush($background)
+        try { $eventArgs.Graphics.FillRectangle($backgroundBrush, $eventArgs.Bounds) } finally { $backgroundBrush.Dispose() }
+        $text = [string]$sender.Items[$eventArgs.Index]
+        $textBounds = New-Object System.Drawing.Rectangle($eventArgs.Bounds.X + 8, $eventArgs.Bounds.Y, [Math]::Max(0, $eventArgs.Bounds.Width - 16), $eventArgs.Bounds.Height)
+        [System.Windows.Forms.TextRenderer]::DrawText($eventArgs.Graphics, $text, $sender.Font, $textBounds, $foreground, [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis)
+        if ($selected) { $eventArgs.DrawFocusRectangle() }
+    })
     if ($Items) { foreach ($item in $Items) { [void]$c.Items.Add($item) } }
     if ($SelectedIndex -ge 0 -and $c.Items.Count -gt $SelectedIndex) { $c.SelectedIndex = $SelectedIndex }
     if ($Parent) { [void]$Parent.Controls.Add($c) }
@@ -2472,16 +2894,16 @@ $StatusLabel = New-Label -Parent $Footer -Text "Status: Ready" -Location (New-Ob
 $StatusLabel.AutoEllipsis = $true
 $StatusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 
-$PageDashboard    = New-PagePanel -CanvasHeight 682; [void]$MainPanel.Controls.Add($PageDashboard)
+$PageDashboard    = New-PagePanel -CanvasHeight 930; [void]$MainPanel.Controls.Add($PageDashboard)
 $PageDashboard.AutoScroll = $false
 $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(0, 0)
 $PageLiveControl  = New-PagePanel -CanvasHeight 1140; [void]$MainPanel.Controls.Add($PageLiveControl)
 $PageAccounts     = New-PagePanel -CanvasHeight 660; [void]$MainPanel.Controls.Add($PageAccounts)
 $PageInstallation = New-PagePanel -CanvasHeight 610; [void]$MainPanel.Controls.Add($PageInstallation)
-$PageTheme        = New-PagePanel -CanvasHeight 690; [void]$MainPanel.Controls.Add($PageTheme)
+$PageTheme        = New-PagePanel -CanvasHeight 970; [void]$MainPanel.Controls.Add($PageTheme)
 $PageBehavior     = New-PagePanel -CanvasHeight 1040; [void]$MainPanel.Controls.Add($PageBehavior)
 $PageHardening    = New-PagePanel -CanvasHeight 780; [void]$MainPanel.Controls.Add($PageHardening)
-$PageRepair       = New-PagePanel -CanvasHeight 572; [void]$MainPanel.Controls.Add($PageRepair)
+$PageRepair       = New-PagePanel -CanvasHeight 860; [void]$MainPanel.Controls.Add($PageRepair)
 
 $DashboardCanvas = Get-PageCanvas $PageDashboard
 $LiveControlCanvas = Get-PageCanvas $PageLiveControl
@@ -2545,11 +2967,36 @@ $DashPrefsStateValue = New-Label -Parent $DashPrefsNote -Text "No saved workspac
 $DashPrefsStateDetail = New-Label -Parent $DashPrefsNote -Text "Your selected path, theme, language, and run options will be remembered after the first successful run." -Location (New-Object System.Drawing.Point(18, 66)) -Size (New-Object System.Drawing.Size(310, 44)) -AutoSize $false -Tag "BodyMuted"
 $BtnRestoreWorkspace = New-Button -Parent $DashPrefsNote -Text "Restore last run" -Location (New-Object System.Drawing.Point(18, 112)) -Size (New-Object System.Drawing.Size(170, 28)) -Tag "SecondaryButton"
 
+$DashHealthSurface = New-Surface -Parent $DashboardCanvas -Location (New-Object System.Drawing.Point(0, 676)) -Size (New-Object System.Drawing.Size(1040, 230)) -Tag "SurfaceAlt"
+$DashHealthHeading = New-Label -Parent $DashHealthSurface -Text "Installation health" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold))
+$DashHealthIntro = New-Label -Parent $DashHealthSurface -Text "Readiness checks stay read-only and reflect the selected JDownloader folder." -Location (New-Object System.Drawing.Point(24, 50)) -Size (New-Object System.Drawing.Size(650, 20)) -AutoSize $false -Tag "BodyMuted"
+$BtnDashUpdateBroker = New-Button -Parent $DashHealthSurface -Text "Check / apply update" -Location (New-Object System.Drawing.Point(650, 20)) -Size (New-Object System.Drawing.Size(178, 34)) -Tag "SecondaryButton"
+$BtnDashHealthRefresh = New-Button -Parent $DashHealthSurface -Text "Refresh health" -Location (New-Object System.Drawing.Point(844, 20)) -Size (New-Object System.Drawing.Size(156, 34)) -Tag "SecondaryButton"
+$DashHealthItems = [ordered]@{}
+foreach ($healthItem in @(@{ Name = 'Java'; X = 24; Y = 92 }, @{ Name = 'JDownloader core'; X = 348; Y = 92 }, @{ Name = 'Theme engine'; X = 672; Y = 92 }, @{ Name = 'Hosts file'; X = 24; Y = 154 }, @{ Name = 'Firewall'; X = 348; Y = 154 }, @{ Name = 'Disk space'; X = 672; Y = 154 })) {
+    $label = New-Label -Parent $DashHealthSurface -Text $healthItem.Name -Location (New-Object System.Drawing.Point($healthItem.X, $healthItem.Y)) -Size (New-Object System.Drawing.Size(184, 18)) -AutoSize $false -Tag "BodyMuted"
+    $badge = New-Badge -Parent $DashHealthSurface -Text "Unknown" -Location (New-Object System.Drawing.Point($healthItem.X + 188, $healthItem.Y - 4)) -Size (New-Object System.Drawing.Size(108, 26)) -Tag "BadgeNeutral"
+    $detail = New-Label -Parent $DashHealthSurface -Text "Not checked" -Location (New-Object System.Drawing.Point($healthItem.X, $healthItem.Y + 24)) -Size (New-Object System.Drawing.Size(296, 20)) -AutoSize $false -Tag "BodyMuted"
+    $DashHealthItems[$healthItem.Name] = @{ Badge = $badge; Detail = $detail }
+}
+
+function Update-DashboardHealth {
+    if (-not $DashHealthItems) { return }
+    $report = Get-JDHealthReport -InstallPath $TxtPath.Text.Trim()
+    foreach ($name in $DashHealthItems.Keys) {
+        $entry = $report.Checks[$name]
+        if (-not $entry) { continue }
+        $state = switch ([string]$entry.State) { 'Ready' { 'Success' }; 'Warning' { 'Warning' }; 'Error' { 'Danger' }; default { 'Neutral' } }
+        Set-BadgeState -Badge $DashHealthItems[$name].Badge -Text ([string]$entry.State) -State $state
+        $DashHealthItems[$name].Detail.Text = [string]$entry.Detail
+    }
+}
+
 function Layout-Dashboard {
     if (-not $PageDashboard -or -not $DashboardCanvas -or -not $DashHero -or -not $DashOverview -or -not $DashPrefs) { return }
 
-    $DashboardCanvas.Size = New-Object System.Drawing.Size(1040, 682)
-    $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(1064, 718)
+    $DashboardCanvas.Size = New-Object System.Drawing.Size(1040, 930)
+    $PageDashboard.AutoScrollMinSize = New-Object System.Drawing.Size(1064, 966)
 
     $DashHero.Size = New-Object System.Drawing.Size(1040, 216)
     $DashTitle.Size = New-Object System.Drawing.Size(590, 52)
@@ -2599,6 +3046,8 @@ function Layout-Dashboard {
     $DashPrefsStateDetail.Size = New-Object System.Drawing.Size(310, 44)
     $BtnRestoreWorkspace.Location = New-Object System.Drawing.Point(18, 112)
     $BtnRestoreWorkspace.Size = New-Object System.Drawing.Size(170, 28)
+    $DashHealthSurface.Location = New-Object System.Drawing.Point(0, 676)
+    $DashHealthSurface.Size = New-Object System.Drawing.Size(1040, 230)
 }
 
 # --- Live Control Page ---
@@ -2966,9 +3415,9 @@ function Invoke-LiveApiAction {
     if (-not $script:LiveApiClient) { return }
     try {
         switch ($Action) {
-            "Start" { Start-JD2Downloads -Client $script:LiveApiClient | Out-Null; Log-Status "JDownloader downloads started." "SUCCESS" }
-            "Pause" { Set-JD2DownloadsPaused -Client $script:LiveApiClient -Paused $true | Out-Null; Log-Status "JDownloader downloads paused." "SUCCESS" }
-            "Stop"  { Stop-JD2Downloads -Client $script:LiveApiClient | Out-Null; Log-Status "JDownloader download controller stopped." "SUCCESS" }
+            "Start" { Start-JD2Downloads -Client $script:LiveApiClient | Out-Null; Log-Status "JDownloader downloads started." "SUCCESS"; Show-ToastNotification -Text "Downloads started." -Type SUCCESS }
+            "Pause" { Set-JD2DownloadsPaused -Client $script:LiveApiClient -Paused $true | Out-Null; Log-Status "JDownloader downloads paused." "SUCCESS"; Show-ToastNotification -Text "Downloads paused." -Type SUCCESS }
+            "Stop"  { Stop-JD2Downloads -Client $script:LiveApiClient | Out-Null; Log-Status "JDownloader download controller stopped." "SUCCESS"; Show-ToastNotification -Text "Download controller stopped." -Type SUCCESS }
         }
         Refresh-LiveApiQueue
     } catch {
@@ -3333,6 +3782,8 @@ function Apply-StateToControls {
         if (Test-StateHas $State "BandwidthScheduleStart") { $TxtBandwidthStart.Text = [string]$State.BandwidthScheduleStart }
         if (Test-StateHas $State "BandwidthScheduleEnd") { $TxtBandwidthEnd.Text = [string]$State.BandwidthScheduleEnd }
         if (Test-StateHas $State "BandwidthScheduleLimit") { Set-NumericSafe -Control $NumOffPeakLimit -Value ([math]::Max(1, [math]::Ceiling([int64]$State.BandwidthScheduleLimit / 1024))) }
+        if (Test-StateHas $State "CleanupScheduleEnabled") { $ChkCleanupSchedule.Checked = ConvertTo-SafeBool $State.CleanupScheduleEnabled $false }
+        if (Test-StateHas $State "CleanupRetentionDays") { Set-NumericSafe -Control $NumCleanupRetention -Value $State.CleanupRetentionDays }
         if (Test-StateHas $State "LiveApiMode") {
             $liveMode = if ([string]$State.LiveApiMode -eq "MyJDownloader") { "MyJDownloader" } else { "Local API" }
             if ($CboLiveMode.Items.Contains($liveMode)) { $CboLiveMode.SelectedItem = $liveMode }
@@ -3407,6 +3858,8 @@ function Get-CurrentGuiState {
         BandwidthScheduleStart= $TxtBandwidthStart.Text.Trim()
         BandwidthScheduleEnd= $TxtBandwidthEnd.Text.Trim()
         BandwidthScheduleLimit= [int]$NumOffPeakLimit.Value * 1024
+        CleanupScheduleEnabled= [bool]$ChkCleanupSchedule.Checked
+        CleanupRetentionDays= [int]$NumCleanupRetention.Value
         BandwidthEndpoint= $bandwidthEndpoint
         LiveApiMode      = $liveMode
         LiveApiEndpoint  = $liveEndpoint
@@ -3451,6 +3904,8 @@ function Get-NormalizedStateObject {
         $parsed = 0
         if ([int]::TryParse(([string]$v).Trim(), [ref]$parsed)) { return $parsed } else { return $default }
     }
+    $cleanupRetentionDays = if (Test-StateHas $State "CleanupRetentionDays") { [math]::Max(1, [math]::Min(3650, (& $toInt $State.CleanupRetentionDays 30))) } else { 30 }
+    $cleanupScheduleEnabled = if (Test-StateHas $State "CleanupScheduleEnabled") { ConvertTo-SafeBool $State.CleanupScheduleEnabled $false } else { $false }
 
     return [ordered]@{
         Mode            = $mode
@@ -3479,6 +3934,8 @@ function Get-NormalizedStateObject {
         BandwidthScheduleStart= $scheduleStart
         BandwidthScheduleEnd= $scheduleEnd
         BandwidthScheduleLimit= if (Test-StateHas $State "BandwidthScheduleLimit") { [math]::Max(1024, (& $toInt $State.BandwidthScheduleLimit 2097152)) } else { 2097152 }
+        CleanupScheduleEnabled= $cleanupScheduleEnabled
+        CleanupRetentionDays= $cleanupRetentionDays
         BandwidthEndpoint= $bandwidthEndpoint
         LiveApiMode      = $liveApiMode
         LiveApiEndpoint  = $liveApiEndpoint
@@ -3521,6 +3978,8 @@ function Get-DefaultWorkspaceState {
         BandwidthScheduleStart= "09:00"
         BandwidthScheduleEnd= "17:00"
         BandwidthScheduleLimit= 2097152
+        CleanupScheduleEnabled= $false
+        CleanupRetentionDays= 30
         BandwidthEndpoint= "http://127.0.0.1:3128"
         LiveApiMode      = "Local"
         LiveApiEndpoint  = "http://127.0.0.1:3128"
@@ -3586,6 +4045,41 @@ function Save-PresetFile {
     }
 }
 
+function Import-DroppedPreset {
+    param([string[]]$Paths)
+    $presetPath = @($Paths | Where-Object { [System.IO.Path]::GetExtension([string]$_) -ieq '.json' } | Select-Object -First 1)
+    if (-not $presetPath) {
+        Log-Status "Drop a .json workspace preset onto the dashboard." "WARN"
+        return
+    }
+    $state = Read-PresetFile -Path ([string]$presetPath)
+    if ($state) {
+        Apply-StateToControls -State $state
+        Log-Status "Preset imported from the dashboard drop target." "SUCCESS"
+        Show-ToastNotification -Text "Workspace preset imported." -Type SUCCESS
+    }
+}
+
+function Set-PresetDropTarget {
+    param($Control)
+    if (-not $Control) { return }
+    $Control.AllowDrop = $true
+    $Control.Add_DragEnter(({
+        param($sender, $eventArgs)
+        if ($eventArgs.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+            $eventArgs.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+        } else {
+            $eventArgs.Effect = [System.Windows.Forms.DragDropEffects]::None
+        }
+    }.GetNewClosure()))
+    $Control.Add_DragDrop(({
+        param($sender, $eventArgs)
+        if ($eventArgs.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+            Import-DroppedPreset -Paths @($eventArgs.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
+        }
+    }.GetNewClosure()))
+}
+
 function Start-SilentWorkspace {
     $state = $null
     if ($script:PresetPath) {
@@ -3631,6 +4125,12 @@ if ($script:BandwidthProfileRequest) {
     [Environment]::Exit($profileExitCode)
 }
 
+if ($script:CleanupProfileRequest) {
+    $script:SilentMode = $true
+    $cleanupExitCode = Invoke-ScheduledCleanup -InstallPath $script:CleanupInstallPath -RetentionDays $script:CleanupRetentionDays
+    [Environment]::Exit($cleanupExitCode)
+}
+
 if ($script:SilentMode -or $script:ExportPresetPath) {
     $exitCode = Start-SilentWorkspace
     [Environment]::Exit($exitCode)
@@ -3660,6 +4160,7 @@ function Get-ChangedWorkspaceAreas {
         "installation setup"   = @("Mode", "InstallSource", "InstallPath")
         "appearance"           = @("ThemeName", "IconPack", "WindowDec", "ForceMinimal")
         "download behavior"    = @("MaxSim", "DlFolder", "PauseSpeed", "StartMin", "MinToTray", "CloseToTray", "MaxChunks", "MaxPerHost", "MaxPerHostEnabled", "SpeedLimitEnabled", "SpeedLimit", "BandwidthScheduleEnabled", "BandwidthScheduleStart", "BandwidthScheduleEnd", "BandwidthScheduleLimit", "BandwidthEndpoint", "HashCheck", "PreserveFileDate", "ClipboardMonitor")
+        "maintenance"          = @("CleanupScheduleEnabled", "CleanupRetentionDays")
         "hardening"            = @("PatchExe", "AutoUpdate", "DisableLocalAPI", "WriteVmOptions")
         "workspace preferences"= @("GuiThemeName", "LanguageCode")
         "remote control"       = @("LiveApiMode", "LiveApiEndpoint", "LiveApiDevice")
@@ -3763,6 +4264,8 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $BtnDashInstallJump -Name "Open installation from dashboard" -Description "Jump directly to installation path and mode settings." -TabIndex 4
     Set-ControlMetadata -Control $BtnDashThemeJump   -Name "Open themes from dashboard" -Description "Jump directly to theme previews and icon options." -TabIndex 5
     Set-ControlMetadata -Control $BtnDashRepairJump  -Name "Open repair tools from dashboard" -Description "Jump directly to maintenance and recovery tools." -TabIndex 6
+    Set-ControlMetadata -Control $BtnDashUpdateBroker -Name "Check or apply JDownloader update" -Description "Check the official JDownloader revision and apply it with a rollback snapshot when available." -TabIndex 7
+    Set-ControlMetadata -Control $BtnDashHealthRefresh -Name "Refresh installation health" -Description "Refresh read-only readiness indicators for the selected JDownloader folder." -TabIndex 8
     Set-ControlMetadata -Control $TxtPath     -Name "JDownloader installation folder" -Description "Enter the folder for the JDownloader installation you want to modify, or leave it blank in clean install mode." -TabIndex 0
     Set-ControlMetadata -Control $BtnBrowse   -Name "Browse for installation folder" -Description "Open a folder picker for the JDownloader installation folder." -TabIndex 1
     Set-ControlMetadata -Control $BtnDetect   -Name "Auto-detect installation folder" -Description "Try to locate the current JDownloader installation automatically." -TabIndex 2
@@ -3773,7 +4276,15 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $CboIcons     -Name "Icon pack" -Description "Choose the icon pack that should be layered onto the selected theme." -TabIndex 0
     Set-ControlMetadata -Control $ChkWinDec    -Name "Custom window decorations" -Description "Enable custom window decorations when the theme supports them." -TabIndex 1
     Set-ControlMetadata -Control $ChkMinLay    -Name "Compact main tabs" -Description "Use a tighter main tab layout inside JDownloader." -TabIndex 2
-    Set-ControlMetadata -Control $BtnOpenThm   -Name "Open icon folder" -Description "Open the active JDownloader icon folder on disk." -TabIndex 3
+    Set-ControlMetadata -Control $BtnValidateIcons -Name "Validate installed icon pack" -Description "Check installed icon files against common JDownloader icon keys." -TabIndex 3
+    Set-ControlMetadata -Control $BtnOpenThm   -Name "Open icon folder" -Description "Open the active JDownloader icon folder on disk." -TabIndex 4
+    Set-ControlMetadata -Control $TxtThemeBuilderName -Name "Custom theme name" -Description "Name the local theme bundle." -TabIndex 5
+    Set-ControlMetadata -Control $TxtThemeBuilderBackground -Name "Custom theme background" -Description "Six-digit hex background color." -TabIndex 6
+    Set-ControlMetadata -Control $TxtThemeBuilderSurface -Name "Custom theme surface" -Description "Six-digit hex surface color." -TabIndex 7
+    Set-ControlMetadata -Control $TxtThemeBuilderAccent -Name "Custom theme accent" -Description "Six-digit hex accent color." -TabIndex 8
+    Set-ControlMetadata -Control $TxtThemeBuilderForeground -Name "Custom theme text" -Description "Six-digit hex foreground color." -TabIndex 9
+    Set-ControlMetadata -Control $BtnThemeBuilderPreview -Name "Preview custom theme" -Description "Render the custom palette locally in the theme preview panel." -TabIndex 10
+    Set-ControlMetadata -Control $BtnThemeBuilderExport -Name "Export custom theme" -Description "Save the custom palette as a .theme bundle." -TabIndex 11
 
     Set-ControlMetadata -Control $NumSim       -Name "Max simultaneous downloads" -Description "Choose the number of downloads that can run at the same time." -TabIndex 0
     Set-ControlMetadata -Control $NumPause     -Name "Pause speed" -Description "Choose the speed threshold used for the pause behavior." -TabIndex 1
@@ -3806,6 +4317,14 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $RepairAudit.Button      -Name "Run health audit" -Description "Check the installation for missing or damaged configuration files." -TabIndex 0
     Set-ControlMetadata -Control $RepairSafe.Button       -Name "Launch safe mode" -Description "Start JDownloader in safe mode for troubleshooting." -TabIndex 0
     Set-ControlMetadata -Control $RepairUninstall.Button  -Name "Full uninstall" -Description "Remove JDownloader from the selected install folder." -TabIndex 0
+    Set-ControlMetadata -Control $ChkCleanupSchedule -Name "Nightly cleanup schedule" -Description "Rotate stale cache, log, temporary, and old cfg backup items at 02:30." -TabIndex 0
+    Set-ControlMetadata -Control $NumCleanupRetention -Name "Cleanup retention days" -Description "Keep cleanup targets newer than this number of days." -TabIndex 1
+    Set-ControlMetadata -Control $BtnCleanupRun -Name "Run cleanup now" -Description "Run the safe cleanup pass immediately for the selected installation." -TabIndex 2
+    Set-ControlMetadata -Control $BtnCleanupApply -Name "Apply cleanup schedule" -Description "Register or remove the nightly Windows Task Scheduler cleanup task." -TabIndex 3
+    Set-ControlMetadata -Control $CboBackupSnapshot -Name "Configuration backup snapshot" -Description "Choose a cfg snapshot created before a destructive operation." -TabIndex 4
+    Set-ControlMetadata -Control $BtnRefreshBackups -Name "Refresh configuration snapshots" -Description "Reload available cfg backup snapshots." -TabIndex 5
+    Set-ControlMetadata -Control $BtnRestoreBackup -Name "Restore configuration snapshot" -Description "Replace cfg with the selected snapshot after creating a safety backup." -TabIndex 6
+    Set-ControlMetadata -Control $BtnSafeModeDiff -Name "Write Safe-Mode configuration diff" -Description "Compare the current cfg folder with the newest known-good snapshot." -TabIndex 7
 
     Set-ControlMetadata -Control $BtnExec      -Name "Apply selected changes" -Description "Run the selected installation, theme, behavior, hardening, and repair operations." -TabIndex 0
     Set-ControlMetadata -Control $BtnRestoreWorkspace -Name "Restore last run" -Description "Restore the last successful workspace selections and discard pending edits." -TabIndex 2
@@ -3878,12 +4397,30 @@ $LblIco = New-Label -Parent $ThemeOptions -LangKey "IconPack" -Location (New-Obj
 $CboIcons = New-ComboBox -Parent $ThemeOptions -Location (New-Object System.Drawing.Point(24, 154)) -Size (New-Object System.Drawing.Size(312, 36)) -Tag "Input" -Items $IconDefinitions.Keys
 $ChkWinDec = New-CheckBox -Parent $ThemeOptions -LangKey "EnableWinDec" -Location (New-Object System.Drawing.Point(24, 220)) -Checked $true
 $ChkMinLay = New-CheckBox -Parent $ThemeOptions -LangKey "CompactTabs" -Location (New-Object System.Drawing.Point(24, 258))
-[void](New-Label -Parent $ThemeOptions -Text "Theme previews can keep loading while you continue configuring the rest of the tool." -Location (New-Object System.Drawing.Point(24, 298)) -Size (New-Object System.Drawing.Size(312, 36)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $ThemeOptions -Text "Theme previews can keep loading while you continue configuring the rest of the tool." -Location (New-Object System.Drawing.Point(24, 298)) -Size (New-Object System.Drawing.Size(312, 18)) -AutoSize $false -Tag "BodyMuted")
 $BtnOpenThm = New-Button -Parent $ThemeOptions -LangKey "OpenIconFolder" -Location (New-Object System.Drawing.Point(24, 352)) -Size (New-Object System.Drawing.Size(220, 36)) -Tag "SecondaryButton"
 $ThemeSelectionCallout = New-Surface -Parent $ThemeOptions -Location (New-Object System.Drawing.Point(24, 388)) -Size (New-Object System.Drawing.Size(312, 88)) -Tag "Callout"
 [void](New-Label -Parent $ThemeSelectionCallout -Text "Current preset" -Location (New-Object System.Drawing.Point(18, 12)) -Font (New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)) -Tag "BodyMuted")
 $ThemeSelectionValue = New-Label -Parent $ThemeSelectionCallout -Text "Choose a theme preset" -Location (New-Object System.Drawing.Point(18, 30)) -Size (New-Object System.Drawing.Size(276, 20)) -AutoSize $false -Tag "MutedStrong"
 $ThemeSelectionDetail = New-Label -Parent $ThemeSelectionCallout -Text "Icon pack, window decorations, and compact tabs update live." -Location (New-Object System.Drawing.Point(18, 54)) -Size (New-Object System.Drawing.Size(276, 22)) -AutoSize $false -Tag "BodyMuted"
+
+$ThemeBuilderSurface = New-Surface -Parent $ThemeCanvas -Location (New-Object System.Drawing.Point(0, 678)) -Size (New-Object System.Drawing.Size(1040, 260)) -Tag "Surface"
+[void](New-Label -Parent $ThemeBuilderSurface -Text "Theme builder" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $ThemeBuilderSurface -Text "Create a local FlatLaf color bundle, preview it immediately, and export it as a portable .theme package." -Location (New-Object System.Drawing.Point(24, 48)) -Size (New-Object System.Drawing.Size(760, 20)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $ThemeBuilderSurface -Text "Name" -Location (New-Object System.Drawing.Point(24, 78)) -Size (New-Object System.Drawing.Size(220, 18)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $ThemeBuilderSurface -Text "Background" -Location (New-Object System.Drawing.Point(260, 78)) -Size (New-Object System.Drawing.Size(110, 18)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $ThemeBuilderSurface -Text "Surface" -Location (New-Object System.Drawing.Point(380, 78)) -Size (New-Object System.Drawing.Size(110, 18)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $ThemeBuilderSurface -Text "Accent" -Location (New-Object System.Drawing.Point(500, 78)) -Size (New-Object System.Drawing.Size(110, 18)) -AutoSize $false -Tag "BodyMuted")
+[void](New-Label -Parent $ThemeBuilderSurface -Text "Text" -Location (New-Object System.Drawing.Point(620, 78)) -Size (New-Object System.Drawing.Size(110, 18)) -AutoSize $false -Tag "BodyMuted")
+$TxtThemeBuilderName = New-TextBox -Parent $ThemeBuilderSurface -Location (New-Object System.Drawing.Point(24, 98)) -Size (New-Object System.Drawing.Size(220, 34)) -Text "My Custom Theme" -Tag "Input"
+$TxtThemeBuilderBackground = New-TextBox -Parent $ThemeBuilderSurface -Location (New-Object System.Drawing.Point(260, 98)) -Size (New-Object System.Drawing.Size(110, 34)) -Text "#1e1e2e" -Tag "Input"
+$TxtThemeBuilderSurface = New-TextBox -Parent $ThemeBuilderSurface -Location (New-Object System.Drawing.Point(380, 98)) -Size (New-Object System.Drawing.Size(110, 34)) -Text "#313244" -Tag "Input"
+$TxtThemeBuilderAccent = New-TextBox -Parent $ThemeBuilderSurface -Location (New-Object System.Drawing.Point(500, 98)) -Size (New-Object System.Drawing.Size(110, 34)) -Text "#cba6f7" -Tag "Input"
+$TxtThemeBuilderForeground = New-TextBox -Parent $ThemeBuilderSurface -Location (New-Object System.Drawing.Point(620, 98)) -Size (New-Object System.Drawing.Size(110, 34)) -Text "#cdd6f4" -Tag "Input"
+$BtnThemeBuilderPreview = New-Button -Parent $ThemeBuilderSurface -Text "Preview locally" -Location (New-Object System.Drawing.Point(24, 154)) -Size (New-Object System.Drawing.Size(154, 36)) -Tag "SecondaryButton"
+$BtnThemeBuilderExport = New-Button -Parent $ThemeBuilderSurface -Text "Export .theme" -Location (New-Object System.Drawing.Point(190, 154)) -Size (New-Object System.Drawing.Size(154, 36)) -Tag "PrimaryButton"
+$LblThemeBuilderStatus = New-Label -Parent $ThemeBuilderSurface -Text "Enter six-digit hex colors such as #cba6f7." -Location (New-Object System.Drawing.Point(24, 204)) -Size (New-Object System.Drawing.Size(700, 22)) -AutoSize $false -Tag "BodyMuted"
+$BtnValidateIcons = New-Button -Parent $ThemeOptions -Text "Validate installed icons" -Location (New-Object System.Drawing.Point(24, 316)) -Size (New-Object System.Drawing.Size(220, 30)) -Tag "SecondaryButton"
 
 function Resize-ThemePreview {
     if (-not $PnlPreview) { return }
@@ -3909,6 +4446,55 @@ function Update-ThemeSelectionSummary {
     $ThemeSelectionDetail.Text = "{0} {1} {2}" -f $iconNote, $windowNote, $densityNote
 }
 
+function ConvertTo-ThemeColor {
+    param([string]$Value, [System.Drawing.Color]$Fallback)
+    try {
+        if ($Value -match '^#[0-9a-fA-F]{6}$') { return [System.Drawing.ColorTranslator]::FromHtml($Value) }
+    } catch {}
+    return $Fallback
+}
+
+function New-ThemePreviewBitmap {
+    param([hashtable]$Colors, [string]$Title = "JDownloader theme preview")
+    if (-not $Colors) { return $null }
+    $background = ConvertTo-ThemeColor -Value ([string]$Colors.Background) -Fallback ([System.Drawing.Color]::FromArgb(30, 30, 46))
+    $surface = ConvertTo-ThemeColor -Value ([string]$Colors.Surface) -Fallback ([System.Drawing.Color]::FromArgb(49, 50, 68))
+    $foreground = ConvertTo-ThemeColor -Value ([string]$Colors.Foreground) -Fallback ([System.Drawing.Color]::White)
+    $accent = ConvertTo-ThemeColor -Value ([string]$Colors.Accent) -Fallback ([System.Drawing.Color]::CornflowerBlue)
+    $bitmap = New-Object System.Drawing.Bitmap(610, 440)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $titleFont = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
+    $bodyFont = New-Object System.Drawing.Font("Segoe UI", 10)
+    $backgroundBrush = New-Object System.Drawing.SolidBrush($background)
+    $surfaceBrush = New-Object System.Drawing.SolidBrush($surface)
+    $foregroundBrush = New-Object System.Drawing.SolidBrush($foreground)
+    $accentBrush = New-Object System.Drawing.SolidBrush($accent)
+    try {
+        $graphics.Clear($background)
+        $graphics.FillRectangle($surfaceBrush, 18, 18, 574, 72)
+        $graphics.FillRectangle($surfaceBrush, 18, 108, 180, 300)
+        $graphics.FillRectangle($surfaceBrush, 216, 108, 376, 300)
+        $graphics.FillRectangle($accentBrush, 38, 130, 110, 12)
+        $graphics.FillRectangle($accentBrush, 246, 150, 148, 34)
+        $graphics.FillRectangle($accentBrush, 410, 150, 142, 34)
+        $graphics.DrawString($Title, $titleFont, $foregroundBrush, 38, 38)
+        $graphics.DrawString("Download queue", $bodyFont, $foregroundBrush, 38, 112)
+        $graphics.DrawString("Ready to manage links", $bodyFont, $foregroundBrush, 246, 120)
+        $graphics.DrawString("Start downloads", $bodyFont, $backgroundBrush, 264, 158)
+        $graphics.DrawString("Refresh queue", $bodyFont, $backgroundBrush, 432, 158)
+        $graphics.DrawString("Colors are generated locally from the selected preset.", $bodyFont, $foregroundBrush, 246, 218)
+        $graphics.DrawString("No external preview asset required.", $bodyFont, $foregroundBrush, 246, 246)
+    } finally {
+        foreach ($brush in @($backgroundBrush, $surfaceBrush, $foregroundBrush, $accentBrush)) {
+            if ($brush) { $brush.Dispose() }
+        }
+        $titleFont.Dispose()
+        $bodyFont.Dispose()
+        $graphics.Dispose()
+    }
+    return $bitmap
+}
+
 function Update-ThemePreview {
     $selection = $ThemeDefinitions[$CboTheme.Text]
     if (-not $selection) { return }
@@ -3916,6 +4502,15 @@ function Update-ThemePreview {
     $LblThemeLink.Tag = $selection.ThemeUrl
     if ($ThemeSelectionValue) { $ThemeSelectionValue.Text = $selection.DisplayName }
     Update-ThemeSelectionSummary
+    if ($selection.PreviewColors) {
+        $oldImage = $PicThemePreview.Image
+        $PicThemePreview.Image = New-ThemePreviewBitmap -Colors $selection.PreviewColors -Title $selection.DisplayName
+        if ($oldImage) { try { $oldImage.Dispose() } catch {} }
+        $LblPreviewState.Visible = $false
+        Set-BadgeState -Badge $ThemePreviewBadge -Text "Native preview" -State "Success"
+        if ($ThemePreviewBadge) { $ThemePreviewBadge.BringToFront() }
+        return
+    }
     if ($ThemeImageCache.ContainsKey($CboTheme.Text) -and $ThemeImageCache[$CboTheme.Text]) {
         $PicThemePreview.Image = $ThemeImageCache[$CboTheme.Text]
         $LblPreviewState.Visible = $false
@@ -3932,6 +4527,85 @@ function Update-ThemePreview {
         $LblPreviewState.Visible = $true
     }
     if ($ThemePreviewBadge) { $ThemePreviewBadge.BringToFront() }
+}
+
+function Get-ThemeBuilderConfig {
+    $name = $TxtThemeBuilderName.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($name)) { throw "Enter a name for the custom theme." }
+    $fields = [ordered]@{
+        Background = $TxtThemeBuilderBackground.Text.Trim()
+        Surface    = $TxtThemeBuilderSurface.Text.Trim()
+        Accent     = $TxtThemeBuilderAccent.Text.Trim()
+        Foreground = $TxtThemeBuilderForeground.Text.Trim()
+    }
+    foreach ($key in $fields.Keys) {
+        if ($fields[$key] -notmatch '^#[0-9a-fA-F]{6}$') { throw "$key must be a six-digit hex color such as #cba6f7." }
+    }
+    return [pscustomobject]@{ Name = $name; Colors = $fields }
+}
+
+function Update-CustomThemePreview {
+    try {
+        $config = Get-ThemeBuilderConfig
+        $oldImage = $PicThemePreview.Image
+        $PicThemePreview.Image = New-ThemePreviewBitmap -Colors $config.Colors -Title $config.Name
+        if ($oldImage) { try { $oldImage.Dispose() } catch {} }
+        $LblPreviewState.Visible = $false
+        Set-BadgeState -Badge $ThemePreviewBadge -Text "Builder preview" -State "Accent"
+        $LblThemeBuilderStatus.Text = "Preview ready for '$($config.Name)'. Export when the palette looks right."
+        $LblThemeBuilderStatus.Tag = "BodyMuted"
+        Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $ThemeBuilderSurface
+    } catch {
+        $LblThemeBuilderStatus.Text = $_.Exception.Message
+        $LblThemeBuilderStatus.Tag = "BodyMuted"
+        Log-Status "Theme builder input is invalid: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Export-ThemeBundle {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try {
+        $config = Get-ThemeBuilderConfig
+        $temp = Join-Path $WorkDir ("theme-builder-{0}" -f ([guid]::NewGuid().ToString('N')))
+        New-Item -ItemType Directory -Path $temp -Force -ErrorAction Stop | Out-Null
+        $manifest = [ordered]@{
+            format = 1
+            name = $config.Name
+            engine = "FlatLaf"
+            lookandfeeltheme = "FLATLAF_DARK"
+            colors = $config.Colors
+            exported = (Get-Date).ToString("o")
+        }
+        $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $temp 'theme.json') -Encoding UTF8 -ErrorAction Stop
+        $readme = [ordered]@{ name = $config.Name; format = "JDownloader 2 Ultimate Manager theme bundle"; install = "Import this .theme bundle from a future manager session or inspect theme.json." }
+        $readme | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $temp 'manifest.json') -Encoding UTF8 -ErrorAction Stop
+        Compress-Archive -Path (Join-Path $temp '*') -DestinationPath $Path -CompressionLevel Optimal -Force -ErrorAction Stop
+        Log-Status "Theme bundle exported to $Path." "SUCCESS"
+        return $true
+    } catch {
+        Log-Status "Theme bundle export failed: $($_.Exception.Message)" "ERROR"
+        return $false
+    } finally {
+        if ($temp -and (Test-Path $temp)) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Update-InstalledIconValidation {
+    if ([string]::IsNullOrWhiteSpace($TxtPath.Text) -or -not (Test-Path $TxtPath.Text)) {
+        Log-Status "Select an existing JDownloader install before validating icons." "WARN"
+        return
+    }
+    $iconDefinition = $IconDefinitions[$CboIcons.Text]
+    if (-not $iconDefinition) { Log-Status "Choose an icon pack before validating it." "WARN"; return }
+    $validation = Test-JDIconPackInstall -InstallPath $TxtPath.Text -TargetIconSet $iconDefinition.ID
+    if ($validation.Valid) {
+        $ThemeSelectionDetail.Text = "Icons validated: {0} files in {1}." -f $validation.ImageCount, $iconDefinition.ID
+        Log-Status "Installed icon pack passed validation." "SUCCESS"
+    } else {
+        $ThemeSelectionDetail.Text = "Icon validation: {0} files; missing {1}." -f $validation.ImageCount, ($validation.MissingKeys -join ', ')
+        Log-Status "Installed icon pack needs attention: missing $($validation.MissingKeys -join ', ')." "WARN"
+    }
 }
 
 function Update-BehaviorProfile {
@@ -4209,6 +4883,7 @@ $RepairClearCache = New-ActionTile -Parent $RepairCanvas -Location (New-Object S
 $RepairAudit = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 372)) -Title "Health audit" -Description "Check for missing or corrupted configuration files before you commit to a larger repair step." -ButtonText "Run health audit" -ButtonTag "SuccessButton" -BadgeText "Read-only" -BadgeState "Accent" -Action { if (Ensure-InstallPathSelected) { Run-Audit -InstallPath $TxtPath.Text } }
 $RepairSafe = New-ActionTile -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(354, 372)) -Title "Safe mode launch" -Description "Start JDownloader with a reduced profile for troubleshooting unstable themes or config changes." -ButtonText "Launch safe mode" -ButtonTag "SuccessButton" -BadgeText "Safe" -BadgeState "Success" -Action {
     if (-not (Ensure-InstallPathSelected -RequireExecutable)) { return }
+    [void](New-JDSafeModeDiff -InstallPath $TxtPath.Text.Trim())
     $exe = Join-Path $TxtPath.Text 'JDownloader2.exe'
     try {
         Start-Process -FilePath $exe -ArgumentList '-safe' -ErrorAction Stop
@@ -4220,6 +4895,52 @@ $RepairUninstall = New-ActionTile -Parent $RepairCanvas -Location (New-Object Sy
     if (-not (Show-ActionPrompt -Title "Full uninstall" -Message "This removes JDownloader from the selected folder. Use it only when you want to wipe the install completely." -ConfirmText "Uninstall JDownloader" -ConfirmTag "DangerButton")) { return }
     Task-FullUninstall -InstallPath $TxtPath.Text
     Log-Status "Full uninstall finished." "SUCCESS"
+}
+
+$RepairMaintenanceSurface = New-Surface -Parent $RepairCanvas -Location (New-Object System.Drawing.Point(0, 556)) -Size (New-Object System.Drawing.Size(1040, 260)) -Tag "SurfaceAlt"
+[void](New-Label -Parent $RepairMaintenanceSurface -Text "Maintenance automation and recovery" -Location (New-Object System.Drawing.Point(24, 18)) -Font (New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)))
+[void](New-Label -Parent $RepairMaintenanceSurface -Text "Schedule safe cache rotation, inspect cfg snapshots, and restore a known-good configuration without leaving the manager." -Location (New-Object System.Drawing.Point(24, 48)) -Size (New-Object System.Drawing.Size(900, 20)) -AutoSize $false -Tag "BodyMuted")
+$ChkCleanupSchedule = New-CheckBox -Parent $RepairMaintenanceSurface -Text "Enable nightly cleanup at 02:30" -Location (New-Object System.Drawing.Point(24, 84)) -Checked $false
+[void](New-Label -Parent $RepairMaintenanceSurface -Text "Retention (days)" -Location (New-Object System.Drawing.Point(282, 82)) -Size (New-Object System.Drawing.Size(120, 20)) -AutoSize $false -Tag "BodyMuted")
+$NumCleanupRetention = New-NumericUpDown -Parent $RepairMaintenanceSurface -Location (New-Object System.Drawing.Point(408, 76)) -Tag "Input" -Min 1 -Max 3650 -Value 30
+$BtnCleanupRun = New-Button -Parent $RepairMaintenanceSurface -Text "Run cleanup now" -Location (New-Object System.Drawing.Point(584, 76)) -Size (New-Object System.Drawing.Size(154, 36)) -Tag "SecondaryButton"
+$BtnCleanupApply = New-Button -Parent $RepairMaintenanceSurface -Text "Apply schedule" -Location (New-Object System.Drawing.Point(750, 76)) -Size (New-Object System.Drawing.Size(154, 36)) -Tag "PrimaryButton"
+[void](New-Label -Parent $RepairMaintenanceSurface -Text "Config backup snapshot" -Location (New-Object System.Drawing.Point(24, 142)) -Size (New-Object System.Drawing.Size(180, 20)) -AutoSize $false -Tag "BodyMuted")
+$CboBackupSnapshot = New-ComboBox -Parent $RepairMaintenanceSurface -Location (New-Object System.Drawing.Point(24, 166)) -Size (New-Object System.Drawing.Size(360, 34)) -Tag "Input"
+$BtnRefreshBackups = New-Button -Parent $RepairMaintenanceSurface -Text "Refresh snapshots" -Location (New-Object System.Drawing.Point(402, 166)) -Size (New-Object System.Drawing.Size(154, 34)) -Tag "SecondaryButton"
+$BtnRestoreBackup = New-Button -Parent $RepairMaintenanceSurface -Text "Restore selected" -Location (New-Object System.Drawing.Point(572, 166)) -Size (New-Object System.Drawing.Size(154, 34)) -Tag "DangerButton"
+$BtnSafeModeDiff = New-Button -Parent $RepairMaintenanceSurface -Text "Write Safe-Mode diff" -Location (New-Object System.Drawing.Point(742, 166)) -Size (New-Object System.Drawing.Size(178, 34)) -Tag "SecondaryButton"
+$LblMaintenanceStatus = New-Label -Parent $RepairMaintenanceSurface -Text "Backups are created before destructive changes." -Location (New-Object System.Drawing.Point(24, 218)) -Size (New-Object System.Drawing.Size(900, 20)) -AutoSize $false -Tag "BodyMuted"
+$script:BackupSnapshotPaths = @()
+
+function Refresh-BackupSnapshotList {
+    if (-not $CboBackupSnapshot) { return }
+    $CboBackupSnapshot.Items.Clear()
+    $script:BackupSnapshotPaths = @()
+    if ([string]::IsNullOrWhiteSpace($TxtPath.Text)) {
+        $LblMaintenanceStatus.Text = "Choose an installation folder to inspect cfg snapshots."
+        return
+    }
+    $snapshots = @(Get-JDBackupSnapshots -InstallPath $TxtPath.Text.Trim())
+    foreach ($snapshot in $snapshots) {
+        $script:BackupSnapshotPaths += $snapshot.FullName
+        [void]$CboBackupSnapshot.Items.Add("{0}  ({1})" -f $snapshot.Name, $snapshot.LastWriteTime.ToString("yyyy-MM-dd HH:mm"))
+    }
+    if ($CboBackupSnapshot.Items.Count -gt 0) { $CboBackupSnapshot.SelectedIndex = 0 }
+    $LblMaintenanceStatus.Text = if ($snapshots.Count) { "{0} cfg snapshot(s) available. The newest snapshot is selected." -f $snapshots.Count } else { "No cfg snapshots found yet; a backup is created before destructive changes." }
+}
+
+function Restore-SelectedBackupSnapshot {
+    if (-not (Ensure-InstallPathSelected)) { return }
+    if ($CboBackupSnapshot.SelectedIndex -lt 0 -or $CboBackupSnapshot.SelectedIndex -ge $script:BackupSnapshotPaths.Count) {
+        Log-Status "Select a cfg backup snapshot first." "WARN"
+        return
+    }
+    if (-not (Show-ActionPrompt -Title "Restore configuration snapshot" -Message "JDownloader will stop, the current cfg folder will be backed up, and the selected snapshot will replace it." -ConfirmText "Restore snapshot" -ConfirmTag "DangerButton")) { return }
+    if (Restore-JDBackupSnapshot -InstallPath $TxtPath.Text.Trim() -SnapshotPath $script:BackupSnapshotPaths[$CboBackupSnapshot.SelectedIndex]) {
+        Refresh-BackupSnapshotList
+        Show-ToastNotification -Text "Configuration snapshot restored." -Type SUCCESS
+    }
 }
 
 function Update-ModeSummary {
@@ -4584,6 +5305,7 @@ function Start-WorkspaceApply {
             $script:InitialWorkspaceState = $script:SavedWorkspaceState
             Update-WorkspaceState
             Log-Status (Get-LangValue -Key "RunFinishedBody" -Fallback "Selected operations completed. Review the status area for the final result.") "SUCCESS"
+            Show-ToastNotification -Text "Workspace applied successfully." -Type SUCCESS
             return $true
         }
 
@@ -4645,8 +5367,27 @@ $LblThemeLink.Add_LinkClicked({
 })
 $CboGuiTheme.Add_SelectedIndexChanged({ Apply-GuiTheme -ThemeName $CboGuiTheme.Text; Update-WorkspaceState })
 $CboLang.Add_SelectedIndexChanged({ Apply-LanguageData $CboLang.Text; Update-InterfaceText; Update-WorkspaceState })
+$BtnDashUpdateBroker.Add_Click({
+    if (-not (Ensure-InstallPathSelected)) { return }
+    [void](Invoke-JDUpdateBroker -InstallPath $TxtPath.Text.Trim())
+    Update-DashboardHealth
+})
+$BtnDashHealthRefresh.Add_Click({ Update-DashboardHealth })
 $CboTheme.Add_SelectedIndexChanged({ Update-ThemePreview; Update-WorkspaceState })
 $CboIcons.Add_SelectedIndexChanged({ Update-ThemeSelectionSummary; Update-WorkspaceState })
+$BtnThemeBuilderPreview.Add_Click({ Update-CustomThemePreview })
+$BtnThemeBuilderExport.Add_Click({
+    $dlg = New-Object System.Windows.Forms.SaveFileDialog
+    try {
+        $dlg.Title = "Export theme bundle"
+        $dlg.Filter = "Theme bundle (*.theme)|*.theme|All files (*.*)|*.*"
+        $dlg.DefaultExt = "theme"
+        $dlg.AddExtension = $true
+        $dlg.FileName = "custom-jdownloader.theme"
+        if ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK) { [void](Export-ThemeBundle -Path $dlg.FileName) }
+    } finally { $dlg.Dispose() }
+})
+$BtnValidateIcons.Add_Click({ Update-InstalledIconValidation })
 $CboMode.Add_SelectedIndexChanged({ Update-ModeSummary; Update-PathState; Update-WorkspaceState })
 $TxtPath.Add_TextChanged({ Update-PathState; Update-WorkspaceState })
 $TxtDl.Add_TextChanged({ Update-DownloadFolderState; Update-BehaviorProfile; Update-WorkspaceState })
@@ -4666,6 +5407,19 @@ $ChkPreserveDate.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceSt
 $ChkClipboard.Add_CheckedChanged({ Update-BehaviorProfile; Update-WorkspaceState })
 $ChkDisableAPI.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
 $ChkVmOptions.Add_CheckedChanged({ Update-HardeningProfile; Update-WorkspaceState })
+$ChkCleanupSchedule.Add_CheckedChanged({ Update-WorkspaceState })
+$NumCleanupRetention.Add_ValueChanged({ Update-WorkspaceState })
+$TxtPath.Add_TextChanged({ Refresh-BackupSnapshotList })
+$TxtPath.Add_TextChanged({ Update-DashboardHealth })
+$BtnCleanupRun.Add_Click({
+    if (Ensure-InstallPathSelected) { [void](Invoke-ScheduledCleanup -InstallPath $TxtPath.Text.Trim() -RetentionDays ([int]$NumCleanupRetention.Value)); Refresh-BackupSnapshotList }
+})
+$BtnCleanupApply.Add_Click({
+    if (Ensure-InstallPathSelected) { [void](Sync-CleanupSchedule -InstallPath $TxtPath.Text.Trim() -Enabled ([bool]$ChkCleanupSchedule.Checked) -RetentionDays ([int]$NumCleanupRetention.Value)) }
+})
+$BtnRefreshBackups.Add_Click({ Refresh-BackupSnapshotList })
+$BtnRestoreBackup.Add_Click({ Restore-SelectedBackupSnapshot })
+$BtnSafeModeDiff.Add_Click({ if (Ensure-InstallPathSelected) { [void](New-JDSafeModeDiff -InstallPath $TxtPath.Text.Trim()) } })
 $CboLiveMode.Add_SelectedIndexChanged({ Update-LiveConnectionModeControls; Update-WorkspaceState })
 $TxtLiveEndpoint.Add_TextChanged({ Update-WorkspaceState })
 $TxtLiveDevice.Add_TextChanged({ Update-WorkspaceState })
@@ -4731,6 +5485,10 @@ foreach ($entry in $pages.GetEnumerator()) {
     $entry.Key.Add_Click({ Show-Page -Button $this })
 }
 
+foreach ($dropTarget in @($DashboardCanvas, $DashHero, $DashPrefs, $DashPrefsNote)) {
+    Set-PresetDropTarget -Control $dropTarget
+}
+
 $ToolTip.SetToolTip($BtnDashboard, "Open the dashboard overview page.")
 $ToolTip.SetToolTip($BtnLiveControl, "Open live JDownloader queue and LinkGrabber controls.")
 $ToolTip.SetToolTip($BtnAccounts, "Open JDownloader premium account management.")
@@ -4739,9 +5497,19 @@ $ToolTip.SetToolTip($BtnTheme, "Open themes, previews, and icon settings.")
 $ToolTip.SetToolTip($BtnBehavior, "Open download and tray behavior settings.")
 $ToolTip.SetToolTip($BtnHardening, "Open debloat and hardening options.")
 $ToolTip.SetToolTip($BtnRepair, "Open repair and recovery tools.")
+$ToolTip.SetToolTip($ChkCleanupSchedule, "Schedule safe nightly cleanup at 02:30 with the selected retention window.")
+$ToolTip.SetToolTip($NumCleanupRetention, "Stale cache, temporary files, logs, and old cfg snapshots older than this are eligible for cleanup.")
+$ToolTip.SetToolTip($BtnCleanupRun, "Run cleanup immediately without changing the schedule.")
+$ToolTip.SetToolTip($BtnCleanupApply, "Register or remove the nightly cleanup Task Scheduler task.")
+$ToolTip.SetToolTip($CboBackupSnapshot, "Snapshots are created before destructive configuration changes.")
+$ToolTip.SetToolTip($BtnRefreshBackups, "Reload cfg backup snapshots from the selected install.")
+$ToolTip.SetToolTip($BtnRestoreBackup, "Restore the selected cfg snapshot after a confirmation prompt.")
+$ToolTip.SetToolTip($BtnSafeModeDiff, "Write a text diff comparing the current cfg with the newest snapshot.")
 $ToolTip.SetToolTip($BtnDashInstallJump, "Jump straight to installation path and mode settings.")
 $ToolTip.SetToolTip($BtnDashThemeJump, "Jump straight to theme previews and icon options.")
 $ToolTip.SetToolTip($BtnDashRepairJump, "Jump straight to repair and recovery actions.")
+$ToolTip.SetToolTip($BtnDashUpdateBroker, "Check the official JDownloader revision and safely apply an update with rollback protection.")
+$ToolTip.SetToolTip($BtnDashHealthRefresh, "Refresh Java, JDownloader core, theme, hosts, firewall, and disk readiness checks.")
 $ToolTip.SetToolTip($BtnExec, "Apply the selected installation, theme, behavior, hardening, and repair settings in one run.")
 $ToolTip.SetToolTip($CboMode, "Choose whether the tool should refine an existing install or run a fresh deployment flow.")
 $ToolTip.SetToolTip($TxtPath, "Required for modify mode. Optional for clean install mode.")
@@ -4749,10 +5517,19 @@ $ToolTip.SetToolTip($TxtDl, "Leave blank to reset the download folder to JDownlo
 $ToolTip.SetToolTip($CboGuiTheme, "Change the visual theme of this manager window.")
 $ToolTip.SetToolTip($CboLang, "Change the language used by this manager window.")
 $ToolTip.SetToolTip($BtnImportPreset, "Load workspace selections from a JSON preset.")
+$ToolTip.SetToolTip($DashboardCanvas, "Drop a .json workspace preset anywhere on the dashboard to import it.")
 $ToolTip.SetToolTip($BtnExportPreset, "Save the current workspace selections as a JSON preset.")
 $ToolTip.SetToolTip($BtnRestoreWorkspace, "Restore the last successful workspace selections and discard pending edits.")
 $ToolTip.SetToolTip($CboTheme, "Pick the JDownloader look and feel that should be installed.")
 $ToolTip.SetToolTip($CboIcons, "Icon packs can be changed independently from the theme preset.")
+$ToolTip.SetToolTip($BtnValidateIcons, "Validate the installed icon files against common JDownloader icon keys.")
+$ToolTip.SetToolTip($TxtThemeBuilderName, "Name shown inside the exported .theme bundle.")
+$ToolTip.SetToolTip($TxtThemeBuilderBackground, "Custom theme background, for example #1e1e2e.")
+$ToolTip.SetToolTip($TxtThemeBuilderSurface, "Custom theme surface, for example #313244.")
+$ToolTip.SetToolTip($TxtThemeBuilderAccent, "Custom theme accent, for example #cba6f7.")
+$ToolTip.SetToolTip($TxtThemeBuilderForeground, "Custom theme text color, for example #cdd6f4.")
+$ToolTip.SetToolTip($BtnThemeBuilderPreview, "Render the custom palette in the preview panel without downloading anything.")
+$ToolTip.SetToolTip($BtnThemeBuilderExport, "Save the custom palette as a portable .theme archive.")
 $ToolTip.SetToolTip($ChkWinDec, "Turns on custom window decorations when the theme supports them.")
 $ToolTip.SetToolTip($ChkMinLay, "Tightens the main JDownloader tabs for a cleaner, lower-noise shell.")
 $ToolTip.SetToolTip($NumChunks, "Split downloads into parallel segments. Higher values help on premium hosts. Default: 1.")
@@ -4836,12 +5613,15 @@ $Form.Add_Load({
     Update-PathState
     Update-DownloadFolderState
     Update-BehaviorProfile
+    Update-DashboardHealth
     Update-ThemePreview
     Update-HardeningProfile
+    Refresh-BackupSnapshotList
     Show-Page -Button $BtnDashboard
     $script:InitialWorkspaceState = Get-NormalizedStateObject -State (Get-CurrentGuiState)
     if ($saved) { $script:SavedWorkspaceState = Get-NormalizedStateObject -State $saved } else { $script:SavedWorkspaceState = $null }
     $script:IsBootstrapping = $false
+    $script:ToastsEnabled = $true
     Update-WorkspaceState
     Start-ThemeImagePreload -Definitions $ThemeDefinitions
     if ($script:LiveApiPollTimer) { $script:LiveApiPollTimer.Start() }

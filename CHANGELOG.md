@@ -12,6 +12,9 @@ All notable changes to JDownloader-2-Ultimate-Manager will be documented in this
 - **Bandwidth controls** with per-host concurrency enforcement, a global download cap, and daily off-peak Task Scheduler profiles that use the local API when available and atomic config-file fallback otherwise.
 - **WiX 5 MSI packaging** with a reproducible `Tools\Build-Msi.ps1` build, Start Menu shortcut, bundled runtime assets, major-upgrade handling, and removal of manager user data during uninstall.
 - **MyJDownloader remote control** with encrypted login/device transport, device selection, queue inspection, controller actions, LinkGrabber, captcha, and account API support; passwords are not persisted.
+- **Native theme packs and builder** for Catppuccin Mocha, OLED Black, and Nord, with local previews, icon-key validation, and portable `.theme` export.
+- **Maintenance and recovery tools** for scheduled retention cleanup, health indicators, cfg snapshot restore, Safe-Mode diffs, and rollback-protected core updates.
+- **Non-blocking workspace UX** with dark owner-drawn dropdowns, toast feedback, and dashboard drag-and-drop preset import.
 
 ## [v13.8.0] - 2026-06-27
 

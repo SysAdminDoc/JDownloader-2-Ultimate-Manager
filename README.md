@@ -35,7 +35,10 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 
 ### 2. Theming & Appearance
 - Integrated theme engine with one-click installation of community themes (Dracula, Synthetica Black Eye, Flat Dark, Mica, etc.)  
+- Native Catppuccin Mocha, OLED Black, and Nord presets with local previews and no third-party theme download required
 - Icon pack system independent of theme selection  
+- Installed icon validation checks common JDownloader icon keys before you rely on a pack
+- Local theme builder with live color preview and portable `.theme` export
 - Dynamic live previews of themes before applying  
 - Optional window decorations and compact tab layouts  
 
@@ -56,7 +59,11 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Full configuration reset to factory defaults while preserving downloads  
 - Cache cleaning: removes tmp, logs, and cached metadata files  
 - Health audit for missing or corrupted configuration files  
+- Read-only health dashboard for Java, core files, theme configuration, hosts, firewall, and disk space
+- Nightly Task Scheduler cleanup with configurable retention
+- Timestamped cfg snapshots, one-click restore, and Safe-Mode configuration diffs
 - Safe Mode launcher for troubleshooting  
+- Official revision check and rollback-protected core update broker
 - Full uninstall capability for complete removal of JDownloader 2  
 
 ### 6. Live Control & LinkGrabber
@@ -89,6 +96,8 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Review workspace status and the last successful run  
 - Set the GUI theme (Dark, Light, Midnight, Catppuccin Mocha)  
 - Select interface language and restore the last saved workspace  
+- Drop a `.json` workspace preset anywhere on the dashboard to import it
+- Refresh installation health or check/apply a rollback-protected JDownloader update
 - Review first without interruption; admin approval is requested only when the run begins  
 
 ### Installation
@@ -98,6 +107,8 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 ### Themes
 - Select a Look-and-Feel theme  
 - Choose and apply icon packs  
+- Validate installed icon files against common JDownloader keys
+- Use the local theme builder to preview a palette and export a `.theme` bundle
 - Enable or disable window decorations and compact mode  
 
 ### Behavior
@@ -116,6 +127,8 @@ For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JD
 - Reset configuration files  
 - Clear cache  
 - Run a health audit  
+- Enable nightly cleanup, choose retention, or run cleanup immediately
+- Browse cfg snapshots, restore one safely, or write a Safe-Mode diff report
 - Launch Safe Mode  
 - Perform full uninstall  
 
