@@ -210,3 +210,57 @@ All notable changes to JDownloader-2-Ultimate-Manager will be documented in this
 - Installation, behavior, hardening, and repair modules
 - Language engine with JSON translation files
 - Settings persistence to ProgramData
+
+## Roadmap archive — 2026-08-10 — ROADMAP.md
+
+<details>
+<summary>Original roadmap snapshot</summary>
+
+```markdown
+# JDownloader 2 Ultimate Manager Roadmap
+
+PowerShell WPF workspace for installing, theming, hardening, configuring, and repairing JDownloader 2. v13.9.0 covers install, theme, debloat, config, repair, portable settings, preset JSON, remote control, cross-platform cfg tools, and deeper JD2 integration.
+
+## Planned Features
+
+### JDownloader Integration
+
+### Deployment & Packaging
+
+### Theming
+
+### Hardening & Maintenance
+
+### UX
+
+## Competitive Research
+- **Raw JDownloader 2** — upstream; full-featured but config is scattered across JSON files and menus. UM's value prop is unifying that.
+- **MyJDownloader** — official remote control (web + mobile); great for remote but no install/theme/debloat story. Complement, don't replace.
+- **pyLoad / FlareSolverr** — OSS download managers; smaller ecosystem than JD2. Not direct competitors but good reference for API design.
+- **Chocolatey / winget JD2 package** — install-only, no theming or config. UM is the higher layer on top.
+
+## Nice-to-Haves
+
+## Open-Source Research (Round 2)
+
+### Related OSS Projects
+- JDownloader2 community repos — https://github.com/johna23-lab/jdownloader2 and https://github.com/pmoscode-helm/jdownloader2 — code mirrors / Docker images; useful for packaging reference
+- giantpinkrobots/varia — https://github.com/giantpinkrobots/varia — modern aria2 + yt-dlp unified GUI (Linux/Windows); possible long-term migration target
+- yt-dlp/yt-dlp — https://github.com/yt-dlp/yt-dlp — reference extractor catalog; can be paired with JDownloader for sites JD doesn't cover
+- aria2/aria2 — https://github.com/aria2/aria2 — JSON-RPC lightweight downloader; complementary to JD for non-hoster direct links
+- my.jdownloader API (MyJD) — https://github.com/mmzsource/myjdapi and https://github.com/rix1337/MyJDownloader-Scripts — Python clients for the JDownloader remote API
+- 9seconds/ahttp / jdown_manager — community PowerShell/Python glue scripts
+- FlareSolverr — https://github.com/FlareSolverr/FlareSolverr — Cloudflare bypass proxy; JD users chain it for protected hosters
+- JDownloader Telegram/Switch bots (topic: jdownloader-2) — upload pipelines worth studying for auto-post-process hooks
+
+### Features to Borrow
+
+### Patterns & Architectures Worth Studying
+- MyJD API client **auth/session refresh** — PBKDF2 device-key + session token with silent reconnect on expiry; tricky to get right
+- Varia's **aria2 JSON-RPC + yt-dlp subprocess** duo — shows how to present two very different backends under one UI model
+- JDownloader's **FlashGot-style link grabber** intake — regex-match of clipboard against hundreds of hoster patterns; worth mirroring for the app's paste-URL bar
+- yt-dlp's **external-downloader protocol** (`--downloader aria2c --downloader-args "..."`) — mirror this: one unified download command, pick engine per-URL based on heuristics
+- **PowerShell ThreadJob over Start-Job** — lower overhead for keeping multiple backend queries alive concurrently in the GUI
+```
+
+</details>
