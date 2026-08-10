@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.8.0)
+    JDownloader 2 ULTIMATE MANAGER (v13.9.0)
     - Premium workspace UI with surface-based layout, hero sections, and card tiles.
     - Enhanced 18-token theme palette with semantic colors across all four themes.
     - Workspace state tracking with change detection and restore capability.
@@ -28,7 +28,7 @@ Set-StrictMode -Off
 $ErrorActionPreference = 'Continue'
 
 # Script identity - single source of truth for versioning
-$script:AppVersion = '13.8.0'
+$script:AppVersion = '13.9.0'
 $script:AppName    = 'JDownloader 2 Ultimate Manager'
 $script:AppTitle   = "$script:AppName v$script:AppVersion"
 
@@ -640,12 +640,21 @@ function Log-Status {
     try { Update-StatusVisual -Text $Text -Type $Type } catch {}
 }
 
+function New-WorkspaceSecureString {
+    param([string]$PlainText)
+    if ($null -eq $PlainText) { return $null }
+    $secure = New-Object System.Security.SecureString
+    foreach ($character in $PlainText.ToCharArray()) { $secure.AppendChar($character) }
+    $secure.MakeReadOnly()
+    return $secure
+}
+
 function Protect-SettingsValue {
     param([string]$PlainText)
     if ([string]::IsNullOrWhiteSpace($PlainText)) { return "" }
     $secure = $null
     try {
-        $secure = ConvertTo-SecureString -String $PlainText -AsPlainText -Force
+        $secure = New-WorkspaceSecureString -PlainText $PlainText
         return ConvertFrom-SecureString -SecureString $secure
     } catch {
         Log-Status "Could not protect a sensitive workspace setting with Windows DPAPI." "WARN"
@@ -2936,6 +2945,7 @@ $sbY += $sbH + $sbGap
 $BtnHardening    = New-Button -Parent $Sidebar -LangKey "Hardening"    -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
 $sbY += $sbH + $sbGap
 $BtnRepair       = New-Button -Parent $Sidebar -LangKey "Repair"       -Location (New-Object System.Drawing.Point(16, $sbY)) -Size (New-Object System.Drawing.Size(220, $sbH)) -Tag "SidebarBtn"
+$BtnAbout        = New-Button -Parent $Sidebar -Text "About" -Location (New-Object System.Drawing.Point(16, ($sbY + 60))) -Size (New-Object System.Drawing.Size(220, 36)) -Tag "SecondaryButton"
 
 $script:NavIndicators = @{
     $BtnDashboard    = New-Panel -Parent $Sidebar -Location (New-Object System.Drawing.Point(20, $($BtnDashboard.Top + 9))) -Size (New-Object System.Drawing.Size(4, 26)) -Tag "NavIndicator"
@@ -3420,7 +3430,7 @@ function New-LiveApiClientFromControls {
     $client = $null
     $securePassword = $null
     try {
-        $securePassword = ConvertTo-SecureString $TxtLivePassword.Text -AsPlainText -Force
+        $securePassword = New-WorkspaceSecureString -PlainText $TxtLivePassword.Text
         $client = New-JD2ApiClient -BaseUrl $script:LiveApiEndpoint -Mode "MyJDownloader" -TimeoutSec 10
         $devices = @(Connect-JD2MyJDownloader -Client $client -Email $email -Password $securePassword)
         if ($devices.Count -eq 0) { throw "MyJDownloader returned no devices for this account." }
@@ -4667,6 +4677,7 @@ function Apply-AccessibilityMetadata {
     Set-ControlMetadata -Control $BtnBehavior     -Name "Behavior navigation"     -Description "Open download and window behavior settings." -TabIndex 3
     Set-ControlMetadata -Control $BtnHardening    -Name "Hardening navigation"    -Description "Open the debloat and hardening options page." -TabIndex 4
     Set-ControlMetadata -Control $BtnRepair       -Name "Repair navigation"       -Description "Open maintenance and recovery tools." -TabIndex 5
+    Set-ControlMetadata -Control $BtnAbout        -Name "About JDownloader 2 Ultimate Manager" -Description "Show the current manager version and local settings notice." -TabIndex 6
 
     Set-ControlMetadata -Control $CboGuiTheme -Name "Workspace theme" -Description "Choose the visual theme for this manager window." -TabIndex 0
     Set-ControlMetadata -Control $CboLang     -Name "Workspace language" -Description "Choose the language used inside this manager window." -TabIndex 1
@@ -5259,6 +5270,31 @@ function Show-ActionPrompt {
     try {
         return ($dlg.ShowDialog($Form) -eq [System.Windows.Forms.DialogResult]::OK)
     } finally { $dlg.Dispose() }
+}
+
+function Show-AboutDialog {
+    $pal = Get-ActivePalette
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = "About $script:AppName"
+    $dlg.Size = New-Object System.Drawing.Size(520, 330)
+    $dlg.MinimumSize = $dlg.Size
+    $dlg.StartPosition = "CenterParent"
+    $dlg.FormBorderStyle = "FixedDialog"
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+    $dlg.BackColor = $pal.FormBack
+    $dlg.ForeColor = $pal.Fore
+    $surface = New-Surface -Parent $dlg -Location (New-Object System.Drawing.Point(16, 16)) -Size (New-Object System.Drawing.Size(472, 216)) -Tag "SurfaceAlt"
+    [void](New-Label -Parent $surface -Text $script:AppName -Location (New-Object System.Drawing.Point(24, 22)) -Font (New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)))
+    [void](New-Label -Parent $surface -Text "Version $script:AppVersion" -Location (New-Object System.Drawing.Point(24, 58)) -Font (New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)) -Tag "MutedStrong")
+    [void](New-Label -Parent $surface -Text "A guided workspace for installing, configuring, theming, hardening, and repairing JDownloader 2." -Location (New-Object System.Drawing.Point(24, 98)) -Size (New-Object System.Drawing.Size(424, 48)) -AutoSize $false -Tag "BodyMuted")
+    [void](New-Label -Parent $surface -Text "MIT licensed. Settings and sensitive webhook values stay local to the current Windows user." -Location (New-Object System.Drawing.Point(24, 158)) -Size (New-Object System.Drawing.Size(424, 34)) -AutoSize $false -Tag "BodyMuted")
+    $close = New-Button -Parent $dlg -Text "Close" -Location (New-Object System.Drawing.Point(16, 246)) -Size (New-Object System.Drawing.Size(120, 34)) -Tag "SecondaryButton"
+    $close.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $dlg.CancelButton = $close
+    Apply-GuiTheme -ThemeName $script:CurrentGuiTheme -Root $dlg
+    try { [void]$dlg.ShowDialog($Form) } finally { $dlg.Dispose() }
 }
 
 function Ensure-InstallPathSelected {
@@ -6065,6 +6101,7 @@ $ToolTip.SetToolTip($ChkPostDownloadHook, "Run the selected hook hidden with JD2
 $ToolTip.SetToolTip($TxtPostDownloadHook, "Choose a .ps1, .cmd, .bat, or .exe post-download hook.")
 $ToolTip.SetToolTip($BtnPostDownloadHookBrowse, "Browse for a post-download hook script or executable.")
 $ToolTip.SetToolTip($BtnExec, "Apply the selected installation, theme, behavior, hardening, and repair settings in one run.")
+$ToolTip.SetToolTip($BtnAbout, "Show the current manager version and privacy note.")
 $ToolTip.SetToolTip($CboMode, "Choose whether the tool should refine an existing install or run a fresh deployment flow.")
 $ToolTip.SetToolTip($TxtPath, "Required for modify mode. Optional for clean install mode.")
 $ToolTip.SetToolTip($TxtDl, "Leave blank to reset the download folder to JDownloader's default.")
@@ -6231,5 +6268,6 @@ $Form.Add_FormClosing({
 })
 
 $BtnExec.Add_Click({ Start-WorkspaceApply | Out-Null })
+$BtnAbout.Add_Click({ Show-AboutDialog })
 
 [void]$Form.ShowDialog()

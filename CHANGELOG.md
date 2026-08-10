@@ -2,7 +2,7 @@
 
 All notable changes to JDownloader-2-Ultimate-Manager will be documented in this file.
 
-## [Unreleased]
+## [v13.9.0] - 2026-08-09
 
 ### Added
 - **Live Control page** with a headless-tested JDownloader API client for queue inspection, start/pause/stop actions, and direct LinkGrabber submission.
