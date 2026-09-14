@@ -8,6 +8,16 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-PowerShell-58A6FF?style=for-the-badge">
 </p>
 
+<p align="center">
+  <a href="https://ko-fi.com/X8K126YVER">
+    <img height="42" src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Buy me a coffee on Ko-fi" />
+  </a>
+</p>
+
+<p align="center">
+  <sub><em>If this project helps you, a coffee helps me keep working on it.</em></sub>
+</p>
+
 <img width="1637" height="1216" alt="Preview" src="https://github.com/user-attachments/assets/0953927a-209c-476d-aa87-a17f2ab68f19" />
 
 JDownloader 2 Ultimate Manager is a guided control workspace for installing, configuring, theming, hardening, and repairing JDownloader 2. It replaces scattered JSON edits and one-off cleanup steps with one calm, stateful interface that keeps the full setup visible from start to finish.
