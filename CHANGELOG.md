@@ -2,6 +2,11 @@
 
 All notable changes to JDownloader-2-Ultimate-Manager will be documented in this file.
 
+## [v13.9.1] - 2026-09-28
+
+### Changed
+- The README no longer asks anyone to paste an `irm | iex` one-liner into PowerShell. Quick Start now links straight to the signed release assets, with a note to read the single file before you run it.
+
 ## [v13.9.0] - 2026-08-09
 
 ### Added

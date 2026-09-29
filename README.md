@@ -3,7 +3,7 @@
 # JDownloader 2 Ultimate Manager  
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-13.9.0-58A6FF?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-13.9.1-58A6FF?style=for-the-badge">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-4ade80?style=for-the-badge">
   <img alt="Platform" src="https://img.shields.io/badge/platform-PowerShell-58A6FF?style=for-the-badge">
 </p>
@@ -28,9 +28,9 @@ The tool supports both new deployments and existing installations, with live rea
 
 ## Quick Start
 
-Run this command in **PowerShell** to launch instantly:
+[**Download JDownloader2UltimateManager.exe**](https://github.com/SysAdminDoc/JDownloader-2-Ultimate-Manager/releases/latest/download/JDownloader2UltimateManager.exe) from the latest release, or grab the plain [`.ps1` script](https://github.com/SysAdminDoc/JDownloader-2-Ultimate-Manager/releases/latest/download/JDownloader.2.Ultimate.Manager.ps1) if you'd rather read it first.
 
-    irm https://tinyurl.com/jdowntest | iex
+It's one file, so take a look before you run it. Then double-click the `.exe` (accept the UAC prompt, since it needs admin rights to manage JDownloader), or right-click the `.ps1` and choose **Run with PowerShell**.
 
 For maintainers, `Tools\Build-Msi.ps1` creates an unsigned WiX 5 MSI in `dist\JDownloader2UltimateManager.msi` after compiling the current PowerShell script and bundling the required assets. The MSI installs a Start Menu shortcut and removes the manager's local settings during uninstall.
 

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    JDownloader 2 ULTIMATE MANAGER (v13.9.0)
+    JDownloader 2 ULTIMATE MANAGER (v13.9.1)
     - Premium workspace UI with surface-based layout, hero sections, and card tiles.
     - Enhanced 18-token theme palette with semantic colors across all four themes.
     - Workspace state tracking with change detection and restore capability.
@@ -28,7 +28,7 @@ Set-StrictMode -Off
 $ErrorActionPreference = 'Continue'
 
 # Script identity - single source of truth for versioning
-$script:AppVersion = '13.9.0'
+$script:AppVersion = '13.9.1'
 $script:AppName    = 'JDownloader 2 Ultimate Manager'
 $script:AppTitle   = "$script:AppName v$script:AppVersion"
 
